@@ -495,6 +495,22 @@ def load_pretrained_model(model_path, model_base, model_name, load_8bit=False, l
             if not image_tower.is_loaded:
                 image_tower.load_model()
             image_tower.to(device=device, dtype=torch.float16)
+
+            dino_tower = model.get_dino_tower()
+            if not dino_tower.is_loaded:
+                dino_tower.load_model()
+            dino_tower.to(device=device, dtype=torch.float16)
+
+            ocr_tower = model.get_ocr_tower()
+            if not ocr_tower.is_loaded:
+                ocr_tower.load_model()
+            ocr_tower.to(device=device, dtype=torch.float16)
+
+            # graph_tower = model.get_graph_tower()
+            # if not graph_tower.is_loaded:
+            #     graph_tower.load_model()
+            # graph_tower.to(device=device, dtype=torch.float16)
+
             image_processor = image_tower.image_processor
             processor['image'] = image_processor
 

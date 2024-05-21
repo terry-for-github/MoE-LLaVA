@@ -25,6 +25,7 @@ import pathlib
 from glob import glob
 from typing import Dict, Optional, Sequence, List
 
+import numpy
 import torch
 import transformers
 
@@ -39,6 +40,8 @@ from moellava.model import *
 from moellava.mm_utils import tokenizer_image_token
 
 from PIL import Image
+from PIL import ImageFile
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 from moellava.utils import order_pick_k
 
 local_rank = None
@@ -57,6 +60,10 @@ class ModelArguments:
     tune_mm_mlp_adapter: bool = field(default=False)
     mm_vision_select_layer: Optional[int] = field(default=-1)   # default to the last layer
     pretrain_mm_mlp_adapter: Optional[str] = field(default=None)
+    pretrain_dino_mm_mlp_adapter: Optional[str] = field(default=None)
+    pretrain_ocr_mm_mlp_adapter: Optional[str] = field(default=None)
+    pretrain_fusion_mm_mlp_adapter: Optional[str] = field(default=None)
+    # pretrain_graph_mm_mlp_adapter: Optional[str] = field(default=None)
     mm_use_im_start_end: bool = field(default=False)
     mm_use_im_patch_token: bool = field(default=True)
     mm_vision_select_feature: Optional[str] = field(default="patch")
@@ -241,6 +248,56 @@ def safe_save_model_for_hf_trainer(trainer: transformers.Trainer,
                 torch.save(weight_to_save, os.path.join(mm_projector_folder, f'{current_folder}.bin'))
             else:
                 torch.save(weight_to_save, os.path.join(output_dir, f'mm_projector.bin'))
+        keys_to_match = ['dino_mm_projector']
+        if getattr(trainer.args, "use_im_start_end", False):
+            keys_to_match.extend(['embed_tokens', 'embed_in'])
+
+        weight_to_save = get_mm_adapter_state_maybe_zero_3(trainer.model.named_parameters(), keys_to_match)
+        trainer.model.config.save_pretrained(output_dir)
+
+        current_folder = output_dir.split('/')[-1]
+        parent_folder = os.path.dirname(output_dir)
+        if trainer.args.local_rank == 0 or trainer.args.local_rank == -1:
+            if current_folder.startswith('checkpoint-'):
+                mm_projector_folder = os.path.join(parent_folder, "dino_mm_projector")
+                os.makedirs(mm_projector_folder, exist_ok=True)
+                torch.save(weight_to_save, os.path.join(mm_projector_folder, f'{current_folder}.bin'))
+            else:
+                torch.save(weight_to_save, os.path.join(output_dir, f'dino_mm_projector.bin'))
+
+        keys_to_match = ['ocr_mm_projector']
+        if getattr(trainer.args, "use_im_start_end", False):
+            keys_to_match.extend(['embed_tokens', 'embed_in'])
+
+        weight_to_save = get_mm_adapter_state_maybe_zero_3(trainer.model.named_parameters(), keys_to_match)
+        trainer.model.config.save_pretrained(output_dir)
+
+        current_folder = output_dir.split('/')[-1]
+        parent_folder = os.path.dirname(output_dir)
+        if trainer.args.local_rank == 0 or trainer.args.local_rank == -1:
+            if current_folder.startswith('checkpoint-'):
+                mm_projector_folder = os.path.join(parent_folder, "ocr_mm_projector")
+                os.makedirs(mm_projector_folder, exist_ok=True)
+                torch.save(weight_to_save, os.path.join(mm_projector_folder, f'{current_folder}.bin'))
+            else:
+                torch.save(weight_to_save, os.path.join(output_dir, f'ocr_mm_projector.bin'))
+
+        keys_to_match = ['fusion_mm_projector']
+        if getattr(trainer.args, "use_im_start_end", False):
+            keys_to_match.extend(['embed_tokens', 'embed_in'])
+
+        weight_to_save = get_mm_adapter_state_maybe_zero_3(trainer.model.named_parameters(), keys_to_match)
+        trainer.model.config.save_pretrained(output_dir)
+
+        current_folder = output_dir.split('/')[-1]
+        parent_folder = os.path.dirname(output_dir)
+        if trainer.args.local_rank == 0 or trainer.args.local_rank == -1:
+            if current_folder.startswith('checkpoint-'):
+                mm_projector_folder = os.path.join(parent_folder, "fusion_mm_projector")
+                os.makedirs(mm_projector_folder, exist_ok=True)
+                torch.save(weight_to_save, os.path.join(mm_projector_folder, f'{current_folder}.bin'))
+            else:
+                torch.save(weight_to_save, os.path.join(output_dir, f'fusion_mm_projector.bin'))
         return
 
     if trainer.deepspeed:
@@ -981,7 +1038,9 @@ class LazySupervisedDataset(Dataset):
                 image_file = order_pick_k(image_file, MAX_IMAGE_LENGTH)
                 # print(f"total {len(self.list_data_dict[i]['image'])} now {len(image_file)}")
                 image = [Image.open(os.path.join(image_folder, file)).convert('RGB') for file in image_file]
+                # image = [numpy.asarray(img) for img in image]
                 # print(image[0])
+                # print('image_processor:', image_processor)
                 if self.data_args.image_aspect_ratio == 'pad':
                     image = [expand2square(i, tuple(int(x * 255) for x in image_processor.image_mean)) for i in image]
                     image = [image_processor.preprocess(i, return_tensors='pt')['pixel_values'][0] for i in image]
@@ -1048,7 +1107,6 @@ class LazySupervisedDataset(Dataset):
             if 'image' in self.list_data_dict[i] or 'video' in self.list_data_dict[i]:
                 data_dict['image'] = image
             elif self.data_args.is_multimodal:
-                # image does not exist in the data, but the model is multimodal
                 if hasattr(self.data_args.image_processor, 'crop_size'):
                     crop_size = self.data_args.image_processor.crop_size
                     data_dict['image'] = [torch.zeros(3, crop_size['height'], crop_size['width'])]
@@ -1142,13 +1200,13 @@ def make_supervised_data_module(tokenizer: transformers.PreTrainedTokenizer,
 
 def train():
     global local_rank
-
+    # 解析参数
     parser = transformers.HfArgumentParser(
         (ModelArguments, DataArguments, TrainingArguments))
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
     local_rank = training_args.local_rank
     compute_dtype = (torch.float16 if training_args.fp16 else (torch.bfloat16 if training_args.bf16 else torch.float32))
-
+    # 处理BitsAndBytes的配置
     bnb_model_from_pretrained_args = {}
     if training_args.bits in [4, 8]:
         from transformers import BitsAndBytesConfig
@@ -1167,7 +1225,7 @@ def train():
                 bnb_4bit_quant_type=training_args.quant_type # {'fp4', 'nf4'}
             )
         ))
-
+    # 根据模型参数来加载模型
     if model_args.image_tower is not None or model_args.video_tower is not None:
         if not model_args.moe_enable:
             if 'mpt' in model_args.model_name_or_path.lower():
@@ -1297,6 +1355,7 @@ def train():
             **bnb_model_from_pretrained_args
         )
     rank0_print('LLM init. firstly\n', model)
+    # 再根据模型配置来修整模型
     model.config.use_cache = False
 
     if model_args.freeze_backbone:
@@ -1304,6 +1363,7 @@ def train():
 
     if training_args.bits in [4, 8]:
         from peft import prepare_model_for_kbit_training
+        # TODO 为啥这里fp16仍然采用float32
         model.config.torch_dtype = (torch.float32 if training_args.fp16 else (torch.bfloat16 if training_args.bf16 else torch.float32))
         model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=training_args.gradient_checkpointing)
 
@@ -1311,10 +1371,13 @@ def train():
         if hasattr(model, "enable_input_require_grads"):
             model.enable_input_require_grads()
         else:
+            # TODO 为什么函数名是让输入有梯度，但是改的是输出
             def make_inputs_require_grad(module, input, output):
                 output.requires_grad_(True)
             model.get_input_embeddings().register_forward_hook(make_inputs_require_grad)
     # ==============================================================================================
+    # 设置LoRA的配置，需要先提供target modules
+    # 如果开了moe，那就不是所有线性层，如果没开就是所有线性层
     training_args.moe_enable = model_args.moe_enable
     training_args.only_lora_ffn = model_args.only_lora_ffn
     model_args.lora_enable = training_args.lora_enable
@@ -1353,6 +1416,10 @@ def train():
             if training_args.bits == 16:
                 if training_args.bf16:
                     model.to(torch.bfloat16)
+                    # for name, param in model.named_parameters():
+                    #     print('dadadada',name)
+                    #     if 'rnn' in name:
+                    #         param.data = param.data.float()
                 if training_args.fp16:
                     model.to(torch.float16)
             rank0_print("Adding LoRA adapters...")
@@ -1372,12 +1439,16 @@ def train():
             if training_args.bits == 16:
                 if training_args.bf16:
                     model.to(torch.bfloat16)
+                    for name, param in model.named_parameters():
+                        print('adaada', name)
+                        if 'rnn' in name:
+                            param.data = param.data.float()
                 if training_args.fp16:
                     model.to(torch.float16)
             rank0_print("Adding LoRA adapters...")
             model = get_peft_model(model, lora_config)
     # ==============================================================================================
-
+    # 模型的tokenizer
     if 'mpt' in model_args.model_name_or_path:
         tokenizer = transformers.AutoTokenizer.from_pretrained(
             model_args.model_name_or_path,
@@ -1458,6 +1529,7 @@ def train():
             conversation_lib.default_conversation = conversation_lib.conv_templates["vicuna_v1"]
     # print(conversation_lib.default_conversation)
     # =============================================================================================================
+    # 配置模型的图像模块或者视频模块
     if model_args.image_tower is not None or model_args.video_tower is not None:
         # print(model_args)
         model.get_model().initialize_vision_modules(
@@ -1468,6 +1540,10 @@ def train():
             image_tower = model.get_image_tower()
             image_tower.to(dtype=torch.bfloat16 if training_args.bf16 else torch.float16, device=training_args.device)
 
+            # for name, param in image_tower.named_parameters():
+            #     if 'rnn' in name:
+            #         print('dadadada', name)
+            #         param.data = param.data.float()
             data_args.image_processor = image_tower.image_processor
             data_args.is_multimodal = True
         if model_args.video_tower is not None:
@@ -1488,14 +1564,34 @@ def train():
             model.requires_grad_(False)
             for p in model.get_model().mm_projector.parameters():
                 p.requires_grad = True
+            for p in model.get_model().dino_mm_projector.parameters():
+                p.requires_grad = True
+            for p in model.get_model().ocr_mm_projector.parameters():
+                p.requires_grad = True
+            # for p in model.get_model().graph_mm_projector.parameters():
+            #     p.requires_grad = True
+            for p in model.get_model().fusion_mm_projector.parameters():
+                p.requires_grad = True
 
         model.config.freeze_mm_mlp_adapter = training_args.freeze_mm_mlp_adapter
         if training_args.freeze_mm_mlp_adapter:
             for p in model.get_model().mm_projector.parameters():
                 p.requires_grad = False
+            for p in model.get_model().dino_mm_projector.parameters():
+                p.requires_grad = False
+            for p in model.get_model().ocr_mm_projector.parameters():
+                p.requires_grad = False
+            # for p in model.get_model().graph_mm_projector.parameters():
+            #     p.requires_grad = False
+            for p in model.get_model().fusion_mm_projector.parameters():
+                p.requires_grad = False
 
         if training_args.bits in [4, 8]:
             model.get_model().mm_projector.to(dtype=compute_dtype, device=training_args.device)
+            model.get_model().dino_mm_projector.to(dtype=compute_dtype, device=training_args.device)
+            model.get_model().ocr_mm_projector.to(dtype=compute_dtype, device=training_args.device)
+            # model.get_model().graph_mm_projector.to(dtype=compute_dtype, device=training_args.device)
+            model.get_model().fusion_mm_projector.to(dtype=compute_dtype, device=training_args.device)
 
         model.config.mm_use_im_start_end = data_args.mm_use_im_start_end = model_args.mm_use_im_start_end
         model.config.mm_projector_lr = training_args.mm_projector_lr

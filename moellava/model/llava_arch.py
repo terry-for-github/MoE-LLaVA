@@ -14,8 +14,11 @@
 
 
 from abc import ABC, abstractmethod
+from json import load
 
+import numpy
 import torch
+import torch.nn.functional as F
 
 
 from .multimodal_encoder.builder import build_image_tower, build_video_tower
@@ -31,17 +34,44 @@ class LlavaMetaModel:
     def __init__(self, config):
         super(LlavaMetaModel, self).__init__(config)
         if getattr(config, "mm_image_tower", None) is not None:
-            self.image_tower = build_image_tower(config, delay_load=True)
+            self.image_tower = build_image_tower(config, load_model="clip", delay_load=True)
+            self.dino_tower = build_image_tower(config, load_model="dino", delay_load=True)
+            self.ocr_tower = build_image_tower(config, load_model="ocr", delay_load=True)
+            # self.graph_tower = build_image_tower(config, load_model="graph", delay_load=True)
+          
         if getattr(config, "mm_video_tower", None) is not None:
             self.video_tower = build_video_tower(config, delay_load=True)
         if getattr(config, "mm_image_tower", None) is not None or getattr(config, "mm_video_tower", None) is not None:
             self.mm_projector = build_projector(config)
+            self.dino_mm_projector = build_projector(config, load_model="dino", m=2)
+            self.ocr_mm_projector = build_projector(config, load_model="ocr", m=2)
+            # self.graph_tower = build_projector(config, load_model="graph")
+            self.fusion_mm_projector = build_projector(config, load_model="fusion")
 
-    def get_image_tower(self):
-        image_tower = getattr(self, 'image_tower', None)
-        if type(image_tower) is list:
-            image_tower = image_tower[0]
-        return image_tower
+
+    def get_image_tower(self, load_model="clip"):
+        if load_model == "clip":
+            image_tower = getattr(self, 'image_tower', None)
+            if type(image_tower) is list:
+                image_tower = image_tower[0]
+            return image_tower
+        elif load_model == 'dino':
+            dino_tower = getattr(self, 'dino_tower', None)
+            if type(dino_tower) is list:
+                dino_tower = dino_tower[0]
+            return dino_tower
+        elif load_model == 'ocr':
+            ocr_tower = getattr(self, 'ocr_tower', None)
+            if type(ocr_tower) is list:
+                ocr_tower = ocr_tower[0]
+            return ocr_tower
+        # elif load_model == 'graph':
+        #     graph_tower = getattr(self, 'graph_tower', None)
+        #     if type(graph_tower) is list:
+        #         graph_tower = graph_tower[0]
+        #     return graph_tower
+        else:
+            raise ValueError(f'Unknown load_model: {load_model}')
 
     def get_video_tower(self):
         video_tower = getattr(self, 'video_tower', None)
@@ -61,6 +91,10 @@ class LlavaMetaModel:
         mm_vision_select_layer = model_args.mm_vision_select_layer
         mm_vision_select_feature = model_args.mm_vision_select_feature
         pretrain_mm_mlp_adapter = model_args.pretrain_mm_mlp_adapter
+        pretrain_dino_mm_mlp_adapter = model_args.pretrain_dino_mm_mlp_adapter
+        pretrain_ocr_mm_mlp_adapter = model_args.pretrain_ocr_mm_mlp_adapter
+        # pretrain_graph_mm_mlp_adapter = model_args.pretrain_graph_mm_mlp_adapter
+        pretrain_fusion_mm_mlp_adapter = model_args.pretrain_fusion_mm_mlp_adapter
 
         # ==========================================================================
 
@@ -79,6 +113,45 @@ class LlavaMetaModel:
                 else:
                     image_tower = self.image_tower
                 image_tower.load_model()
+
+            if self.get_image_tower(load_model="dino") is None:
+                dino_tower = build_image_tower(model_args, load_model="dino")
+                if fsdp is not None and len(fsdp) > 0:
+                    self.dino_tower = [dino_tower]
+                else:
+                    self.dino_tower = dino_tower
+            else:
+                if fsdp is not None and len(fsdp) > 0:
+                    dino_tower = self.dino_tower[0]
+                else:
+                    dino_tower = self.dino_tower
+                dino_tower.load_model()
+
+            if self.get_image_tower(load_model = "ocr") is None:
+                ocr_tower = build_image_tower(model_args, load_model="ocr")
+                if fsdp is not None and len(fsdp) > 0:
+                    self.ocr_tower = [ocr_tower]
+                else:
+                    self.ocr_tower = ocr_tower
+            else:
+                if fsdp is not None and len(fsdp) > 0:
+                    ocr_tower = self.ocr_tower[0]
+                else:
+                    ocr_tower = self.ocr_tower
+                ocr_tower.load_model()
+
+            # if self.get_image_tower(load_model = "graph") is None:
+            #     graph_tower = build_image_tower(model_args, load_model="graph")
+            #     if fsdp is not None and len(fsdp) > 0:
+            #         self.graph_tower = [graph_tower]
+            #     else:
+            #         self.graph_tower = graph_tower
+            # else:
+            #     if fsdp is not None and len(fsdp) > 0:
+            #         graph_tower = self.graph_tower[0]
+            #     else:
+            #         graph_tower = self.graph_tower
+            #     graph_tower.load_model()
 
 
         self.config.mm_video_tower = video_tower
@@ -125,13 +198,60 @@ class LlavaMetaModel:
             for p in self.mm_projector.parameters():
                 p.requires_grad = True
 
+        if getattr(self, 'dino_mm_projector', None) is None:
+            self.dino_mm_projector = build_projector(self.config, load_model="dino", m=2)
+
+        if getattr(self, 'ocr_mm_projector', None) is None:
+            self.ocr_mm_projector = build_projector(self.config, load_model="ocr", m=2)
+        
+        # if getattr(self, 'graph_mm_projector', None) is None:
+        #     self.graph_mm_projector = build_projector(self.config, load_model="graph")
+
+        if getattr(self, 'fusion_mm_projector', None) is None:
+            self.fusion_mm_projector = build_projector(self.config, load_model='fusion')
+
         if pretrain_mm_mlp_adapter is not None:
             mm_projector_weights = torch.load(pretrain_mm_mlp_adapter, map_location='cpu')
             def get_w(weights, keyword):
                 return {k.split(keyword + '.')[1]: v for k, v in weights.items() if keyword in k}
 
-            self.mm_projector.load_state_dict(get_w(mm_projector_weights, 'mm_projector'))
+            self.mm_projector.load_state_dict(get_w(mm_projector_weights, '.mm_projector'))
 
+        if pretrain_dino_mm_mlp_adapter is not None:
+
+            print("Loading pretrained DINO adpater!!!")
+            dino_mm_projector_weights = torch.load(pretrain_dino_mm_mlp_adapter, map_location='cpu')
+            def get_w(weights, keyword):
+                return {k.split(keyword + '.')[1]: v for k, v in weights.items() if keyword in k}
+
+            self.dino_mm_projector.load_state_dict(get_w(dino_mm_projector_weights, 'dino_mm_projector'))
+
+        if pretrain_ocr_mm_mlp_adapter is not None:
+
+            print("Loading pretrained OCR adpater!!!")
+            ocr_mm_projector_weights = torch.load(pretrain_ocr_mm_mlp_adapter, map_location='cpu')
+            def get_w(weights, keyword):
+                return {k.split(keyword + '.')[1]: v for k, v in weights.items() if keyword in k}
+
+            self.ocr_mm_projector.load_state_dict(get_w(ocr_mm_projector_weights, 'ocr_mm_projector'))
+
+        # if pretrain_graph_mm_mlp_adapter is not None:
+
+        #     print("Loading pretrained scene graph adpater!!!")
+        #     graph_mm_projector_weights = torch.load(pretrain_graph_mm_mlp_adapter, map_location='cpu')
+        #     def get_w(weights, keyword):
+        #         return {k.split(keyword + '.')[1]: v for k, v in weights.items() if keyword in k}
+
+        #     self.graph_mm_projector.load_state_dict(get_w(graph_mm_projector_weights, 'graph_mm_projector'))
+
+        if pretrain_fusion_mm_mlp_adapter is not None:
+
+            print("Loading pretrained Fusion adpater!!!")
+            fusion_mm_projector_weights = torch.load(pretrain_fusion_mm_mlp_adapter, map_location='cpu')
+            def get_w(weights, keyword):
+                return {k.split(keyword + '.')[1]: v for k, v in weights.items() if keyword in k}
+
+            self.fusion_mm_projector.load_state_dict(get_w(fusion_mm_projector_weights, 'fusion_mm_projector'))
 
 class LlavaMetaForCausalLM(ABC):
 
@@ -142,15 +262,66 @@ class LlavaMetaForCausalLM(ABC):
     def get_image_tower(self):
         return self.get_model().get_image_tower()
 
+    def get_dino_tower(self):
+        return self.get_model().get_image_tower(load_model="dino")
+
+    def get_ocr_tower(self):
+        return self.get_model().get_image_tower(load_model="ocr")
+
+    # def get_graph_tower(self):
+    #     return self.get_model().get_graph_tower(load_model="graph")
+
     def get_video_tower(self):
         return self.get_model().get_video_tower()
 
     def encode_images(self, images):
-
         # import ipdb
         # ipdb.set_trace()
         image_features = self.get_model().get_image_tower()(images)
         image_features = self.get_model().mm_projector.forward_image(image_features)
+        return image_features
+
+    def encode_images_withclip(self, images, m=1):
+        image_features_clip = self.get_model().get_image_tower(load_model="clip")(images)
+        bs, num_patches, dim = image_features_clip.shape
+        image_features_clip = image_features_clip.view(bs, num_patches // m, -1)
+        # paras = [para for para in self.get_model().mm_projector.parameters()]
+        # print('image_features_clip_dtype: ', image_features_clip.dtype, paras[0].dtype)
+        image_features_clip = self.get_model().mm_projector.forward_image(image_features_clip)
+        return image_features_clip
+
+    #HACK specify m = 2
+    def encode_images_withdino(self, images, m = 2):
+        image_features_dino = self.get_model().get_image_tower(load_model="dino")(images)
+        bs, num_patches, dim = image_features_dino.shape
+        image_features_dino = image_features_dino.view(bs, num_patches // m, -1)
+        image_features_dino = self.get_model().dino_mm_projector.forward_image(image_features_dino)
+        return image_features_dino
+
+    def encode_images_withocr(self, images, m = 2):
+        image_features_ocr = self.get_model().get_image_tower(load_model="ocr")(images)
+        bs, num_patches, dim = image_features_ocr.shape
+        image_features_ocr = image_features_ocr.view(bs, num_patches // m, -1)
+        image_features_ocr = self.get_model().ocr_mm_projector.forward_image(image_features_ocr)
+        return image_features_ocr
+
+    # def encode_images_withgraph(self, images, m = 2):
+    #     image_features_graph = self.get_model().get_image_tower(load_model="graph")(images)
+    #     ### 
+    #     # bs, num_patches, dim = image_features_graph.shape
+    #     # image_features_graph = image_features_graph.view(bs, num_patches // m, -1)
+    #     image_features_graph = self.get_model().graph_mm_projector.forward_image(image_features_graph)
+    #     return image_features_graph
+
+    def encode_images_withexp(self, images, m = [1,2,2]):
+        image_features_clip = self.encode_images_withclip(images, m = m[0])
+        image_features_dino = self.encode_images_withdino(images, m = m[1])
+        image_features_ocr = self.encode_images_withocr(images, m = m[2])
+        # image_features_graph = self.encode_images_withgraph(images)
+        image_features = torch.cat([image_features_ocr, image_features_dino, image_features_clip], dim=1) ## image_features_graph
+        # print(image_features.shape)
+        image_features = F.gelu(image_features)
+        image_features = self.get_model().fusion_mm_projector.forward_image(image_features)
         return image_features
 
     def encode_videos(self, videos):  # [mini_b, c, t, h, w]
@@ -183,25 +354,38 @@ class LlavaMetaForCausalLM(ABC):
 
 
         # dist.barrier()
+        # image_idx = [idx for idx in range(len(images))]
         image_idx = [idx for idx, img in enumerate(images) if img.ndim == 3]
         is_all_image = len(image_idx) == len(images)
+        # is_all_image = True
         video_idx = [idx for idx, vid in enumerate(images) if vid.ndim == 4]
+        # video_idx = []
         # print(f'rank {dist.get_rank()}', 'image_idx', image_idx)
         # print(f'rank {dist.get_rank()}', 'video_idx', video_idx)
         images_minibatch = torch.stack([images[idx] for idx in image_idx]) if len(image_idx) > 0 else []  # mini_b c h w
+        # images_minibatch = numpy.concatenate([images[idx] for idx in image_idx], axis=0)
+        # images_minibatch = images
         videos_minibatch = torch.stack([images[idx] for idx in video_idx]) if len(video_idx) > 0 else []  # mini_b c t h w
+        # videos_minibatch = []
 
         tmp_image_features = [None] * (len(image_idx) + len(video_idx))
+        # if True:
         if getattr(images_minibatch, 'ndim', 0) == 4:  # batch consists of images, [mini_b, c, h, w]
             if image_tower is not None:
                 # print(f'rank {dist.get_rank()}', 'image batch', images_minibatch.shape)
-                image_features_minibatch = self.encode_images(images_minibatch)  # [mini_b, l, c]
+                # image_features_minibatch = self.encode_images(images_minibatch)  # [mini_b, l, c]
+                # image_features_clip = self.encode_images_withclip(images_minibatch)
+                # image_features_dino = self.encode_images_withdino(images_minibatch)
+                # image_features_ocr = self.encode_images_withocr(images_minibatch)
+                # image_features_minibatch = torch.cat([image_features_ocr, image_features_dino, image_features_clip], dim=1)
+                image_features_minibatch = self.encode_images_withexp(images_minibatch)
             else:
                 image_features_minibatch = torch.randn(1).to(self.device)  # dummy feature for video-only training under tuning
             for i, pos in enumerate(image_idx):
                 tmp_image_features[pos] = image_features_minibatch[i]
         # dist.barrier()
         if getattr(videos_minibatch, 'ndim', 0) == 5:  # batch consists of videos, [mini_b, c, t, h, w]
+        # if False:
             # print(f'rank {dist.get_rank()}', 'video batch', videos_minibatch.shape)
             video_features_minibatch = self.encode_videos(videos_minibatch)  # fake list [mini_b, t, l, c]
             for i, pos in enumerate(video_idx):

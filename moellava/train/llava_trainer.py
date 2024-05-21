@@ -265,6 +265,49 @@ class LLaVATrainer(Trainer):
             if self.args.local_rank == 0 or self.args.local_rank == -1:
                 self.model.config.save_pretrained(output_dir)
                 torch.save(weight_to_save, os.path.join(output_dir, f'mm_projector.bin'))
+            # Save Dino Adapter
+            keys_to_match = ['dino_mm_projector']
+            if getattr(self.args, "use_im_start_end", False):
+                keys_to_match.extend(['embed_tokens', 'embed_in'])
+
+            weight_to_save = get_mm_adapter_state_maybe_zero_3(self.model.named_parameters(), keys_to_match)
+
+            if self.args.local_rank == 0 or self.args.local_rank == -1:
+                self.model.config.save_pretrained(output_dir)
+                torch.save(weight_to_save, os.path.join(output_dir, f'dino_mm_projector.bin'))
+
+            # Save OCR Adapter
+            keys_to_match = ['ocr_mm_projector']
+            if getattr(self.args, "use_im_start_end", False):
+                keys_to_match.extend(['embed_tokens', 'embed_in'])
+
+            weight_to_save = get_mm_adapter_state_maybe_zero_3(self.model.named_parameters(), keys_to_match)
+
+            if self.args.local_rank == 0 or self.args.local_rank == -1:
+                self.model.config.save_pretrained(output_dir)
+                torch.save(weight_to_save, os.path.join(output_dir, f'ocr_mm_projector.bin')) 
+            
+            # # Save Fusion Adapter
+            # keys_to_match = ['graph_mm_projector']
+            # if getattr(self.args, "use_im_start_end", False):
+            #     keys_to_match.extend(['embed_tokens', 'embed_in'])
+
+            # weight_to_save = get_mm_adapter_state_maybe_zero_3(self.model.named_parameters(), keys_to_match)
+
+            # if self.args.local_rank == 0 or self.args.local_rank == -1:
+            #     self.model.config.save_pretrained(output_dir)
+            #     torch.save(weight_to_save, os.path.join(output_dir, f'graph_mm_projector.bin'))
+
+            # Save Fusion Adapter
+            keys_to_match = ['fusion_mm_projector']
+            if getattr(self.args, "use_im_start_end", False):
+                keys_to_match.extend(['embed_tokens', 'embed_in'])
+
+            weight_to_save = get_mm_adapter_state_maybe_zero_3(self.model.named_parameters(), keys_to_match)
+
+            if self.args.local_rank == 0 or self.args.local_rank == -1:
+                self.model.config.save_pretrained(output_dir)
+                torch.save(weight_to_save, os.path.join(output_dir, f'fusion_mm_projector.bin'))
         else:
             super(LLaVATrainer, self)._save_checkpoint(model, trial, metrics)
 

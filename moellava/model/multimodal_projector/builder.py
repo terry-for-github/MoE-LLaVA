@@ -23,14 +23,24 @@ class IdentityMap(nn.Module):
 
 
 
-def build_image_projector(config, delay_load=False, **kwargs):
+def build_image_projector(config, load_model='clip', m=1, delay_load=False, **kwargs):
     projector_type = getattr(config, 'image_projector_type', 'linear')
 
     is_cheap = 'cheap' in projector_type
     projector_type = projector_type.replace('cheap_', '') if is_cheap else projector_type
 
     if projector_type == 'linear':
-        return nn.Linear(config.mm_hidden_size, config.hidden_size)
+        if load_model == 'clip':
+            return nn.Linear(config.mm_hidden_size * m, config.hidden_size)
+        elif load_model == 'dino':
+            #HACK to match DINO-G's hidden size
+            return nn.Linear(1536 * m, config.hidden_size)
+        elif load_model == 'ocr':
+            return nn.Linear(1024 * m, config.hidden_size)
+        elif load_model == 'fusion':
+            return nn.Linear(config.hidden_size, config.hidden_size)
+        # elif load_model == 'graph':
+        #     return nn.Linear(4096, config.hidden_size)
 
     elif projector_type.startswith('qformer'):  # qformer4_36
         qformer_config = cheap_qformer_config_template(config, projector_type) if is_cheap else qformer_config_template(config, projector_type)
@@ -51,7 +61,18 @@ def build_image_projector(config, delay_load=False, **kwargs):
         mlp_gelu_match = re.match(r'^mlp(\d+)x_gelu$', projector_type)
         if mlp_gelu_match:
             mlp_depth = int(mlp_gelu_match.group(1))
-            modules = [nn.Linear(config.mm_hidden_size, config.hidden_size)]
+            if load_model == 'clip':
+                modules = [nn.Linear(config.mm_hidden_size * m, config.hidden_size)]
+            elif load_model == 'dino':
+                modules = [nn.Linear(1536 * m, config.hidden_size)]
+            elif load_model == 'ocr':
+                modules = [nn.Linear(1024 * m, config.hidden_size)]
+            # elif load_model == 'graph':
+            #     modules = [nn.Linear(4096, config.hidden_size)]
+            elif load_model == 'fusion':
+                modules = [nn.Linear(config.hidden_size, config.hidden_size)]
+            else:
+                raise ValueError(f'Unknown load model: {load_model}')
             for _ in range(1, mlp_depth):
                 modules.append(nn.GELU())
                 modules.append(nn.Linear(config.hidden_size, config.hidden_size))
@@ -115,11 +136,11 @@ class MLP(nn.Module):
         return self.mlp(x)
 
 class build_projector(nn.Module):
-    def __init__(self, config, delay_load=False, **kwargs):
+    def __init__(self, config, load_model='clip', m=1, delay_load=False, **kwargs):
         super(build_projector, self).__init__()
         mm_image_tower = getattr(config, 'mm_image_tower', None)
         mm_video_tower = getattr(config, 'mm_video_tower', None)
-        self.image_spatial_proj = build_image_projector(config, delay_load=False, **kwargs) if mm_image_tower is not None else None
+        self.image_spatial_proj = build_image_projector(config, load_model, m, delay_load=False, **kwargs) if mm_image_tower is not None else None
 
         if mm_video_tower is not None:
             self.video_patch_proj = build_video_projector(config, delay_load=False, **kwargs)
