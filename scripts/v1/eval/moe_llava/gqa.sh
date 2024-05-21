@@ -1,15 +1,16 @@
 #!/bin/bash
 
 gpu_list="${CUDA_VISIBLE_DEVICES:-0}"
+unset CUDA_VISIBLE_DEVICES
 IFS=',' read -ra GPULIST <<< "$gpu_list"
 
 CHUNKS=${#GPULIST[@]}
 
-CONV="conv_template"
-CKPT_NAME="your_ckpt_name"
+CONV="phi"
+CKPT_NAME="llavaphi-2.7b-finetune-moe-mousi"
 CKPT="checkpoints/${CKPT_NAME}"
+EVAL="/home/hanqing/data/eval"
 SPLIT="llava_gqa_testdev_balanced"
-EVAL="eval"
 GQADIR="${EVAL}/gqa/data"
 
 for IDX in $(seq 0 $((CHUNKS-1))); do
@@ -40,5 +41,5 @@ mkdir -p $GQADIR/$SPLIT/${CKPT_NAME}
 python3 scripts/convert_gqa_for_eval.py --src $output_file --dst $GQADIR/$SPLIT/${CKPT_NAME}/testdev_balanced_predictions.json
 
 cd $GQADIR
-python3 eval/eval_gqa.py --tier $SPLIT/${CKPT_NAME}/testdev_balanced \
-                         --questions ${EVAL}/gqa/data/questions1.2/testdev_balanced_questions.json
+python3 eval/eval.py --tier $SPLIT/${CKPT_NAME}/testdev_balanced \
+                         --questions ${EVAL}/gqa/data/testdev_balanced_questions.json > ${EVAL}/gqa/${CKPT_NAME}.txt

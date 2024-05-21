@@ -1,30 +1,38 @@
 #!/bin/bash
 
-JSON_FOLDER="ft_json"
-IMAGE_FOLDER="train_image_video"
-cd ~/MoE-LLaVA
+HOME_FOLDER="/home/hanqing"
+CODE_FOLDER="${HOME_FOLDER}/code"
+DATA_FOLDER="${HOME_FOLDER}/data"
+MODEL_FOLDER="${HOME_FOLDER}/models"
+JSON_FOLDER="${DATA_FOLDER}/MoE-LLaVA-Json"
+IMAGE_FOLDER="${DATA_FOLDER}/MoE-LLaVA-Image"
+cd ${CODE_FOLDER}/MoE-LLaVA
 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1 deepspeed moellava/train/train_mem.py \
     --deepspeed ./scripts/zero2.json \
-    --model_name_or_path microsoft/phi-2 \
+    --model_name_or_path ${MODEL_FOLDER}/microsoft_phi-2 \
     --version phi \
     --data_path ${JSON_FOLDER}/la_tune_256k.json \
                 ${JSON_FOLDER}/lrv_tune_331k.json ${JSON_FOLDER}/lvis_tune_220k_.json \
                 ${JSON_FOLDER}/svit_tune_157k.json ${JSON_FOLDER}/nlp_tune.json \
     --image_folder ${IMAGE_FOLDER} \
-    --image_tower openai/clip-vit-large-patch14-336 \
+    --image_tower ${MODEL_FOLDER}/openai_clip-vit-large-patch14-336 \
     --image_projector_type mlp2x_gelu \
-    --pretrain_mm_mlp_adapter ./checkpoints/llavaphi-2.7b-pretrain/mm_projector.bin \
+    --pretrain_mm_mlp_adapter ./checkpoints/llavaphi-2.7b-pretrain-mousi/mm_projector.bin \
+    --pretrain_dino_mm_mlp_adapter ./checkpoints/llavaphi-2.7b-pretrain-mousi/dino_mm_projector.bin \
+    --pretrain_ocr_mm_mlp_adapter ./checkpoints/llavaphi-2.7b-pretrain-mousi/ocr_mm_projector.bin \
+    --pretrain_fusion_mm_mlp_adapter ./checkpoints/llavaphi-2.7b-pretrain-mousi/fusion_mm_projector.bin \
+    --pretrain_graph_mm_mlp_adapter ./checkpoints/llavaphi-2.7b-pretrain-mousi/graph_mm_projector.bin \
     --mm_vision_select_layer -2 \
     --mm_use_im_start_end False \
     --mm_use_im_patch_token False \
     --image_aspect_ratio pad \
     --group_by_modality_length True \
     --bf16 True \
-    --output_dir ./checkpoints/llavaphi-2.7b-finetune \
+    --output_dir ./checkpoints/llavaphi-2.7b-finetune-mousi \
     --num_train_epochs 1 \
-    --per_device_train_batch_size 8 \
+    --per_device_train_batch_size 4 \
     --per_device_eval_batch_size 4 \
-    --gradient_accumulation_steps 2 \
+    --gradient_accumulation_steps 4 \
     --evaluation_strategy "no" \
     --save_strategy "steps" \
     --save_steps 50000 \

@@ -1,10 +1,11 @@
 #!/bin/bash
 
-CONV="conv_template"
-CKPT_NAME="your_ckpt_name"
+CONV="phi"
+CKPT_NAME="llavaphi-2.7b-finetune-moe"
 CKPT="checkpoints/${CKPT_NAME}"
-EVAL="eval"
-deepspeed moellava/eval/model_vqa.py \
+EVAL="/home/hanqing/data/eval"
+
+deepspeed --include localhost:$1 --master_port $(($1 + 29500)) moellava/eval/model_vqa.py \
     --model-path ${CKPT} \
     --question-file ${EVAL}/mm-vet/llava-mm-vet.jsonl \
     --image-folder ${EVAL}/mm-vet/images \
@@ -22,4 +23,4 @@ python3 scripts/convert_mmvet_for_eval.py \
 python3 moellava/eval/eval_gpt_mmvet.py \
     --mmvet_path ${EVAL}/mm-vet \
     --ckpt_name ${CKPT_NAME} \
-    --result_path ${EVAL}/mm-vet/results
+    --result_path ${EVAL}/mm-vet/results # > ${EVAL}/mm-vet/${CKPT_NAME}.txt

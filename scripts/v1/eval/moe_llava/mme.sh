@@ -1,10 +1,10 @@
 #!/bin/bash
 
-CONV="conv_template"
-CKPT_NAME="your_ckpt_name"
+CONV="phi"
+CKPT_NAME="llavaphi-2.7b-finetune-moe-mousi"
 CKPT="checkpoints/${CKPT_NAME}"
-EVAL="eval"
-deepspeed moellava/eval/model_vqa_loader.py \
+EVAL="/home/hanqing/data/eval"
+deepspeed --include localhost:$1 --master_port $(($1 + 29500)) moellava/eval/model_vqa_loader.py \
     --model-path ${CKPT} \
     --question-file ${EVAL}/MME/llava_mme.jsonl \
     --image-folder ${EVAL}/MME/MME_Benchmark_release_version \
@@ -18,5 +18,5 @@ python convert_answer_to_mme.py --experiment $CKPT_NAME
 
 cd eval_tool
 
-python calculation.py --results_dir answers/$CKPT_NAME
+python calculation.py --results_dir answers/$CKPT_NAME > ${EVAL}/MME/${CKPT_NAME}.txt
 

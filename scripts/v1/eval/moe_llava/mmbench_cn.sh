@@ -1,12 +1,12 @@
 #!/bin/bash
 
 SPLIT="mmbench_dev_cn_20231003"
-CONV="conv_template"
-CKPT_NAME="your_ckpt_name"
+CONV="phi"
+CKPT_NAME="llavaphi-2.7b-finetune-moe"
 CKPT="checkpoints/${CKPT_NAME}"
-EVAL="eval"
+EVAL="/home/hanqing/data/eval"
 
-deepspeed moellava/eval/model_vqa_mmbench.py \
+deepspeed --include localhost:$1 --master_port $(($1 + 29500)) moellava/eval/model_vqa_mmbench.py \
     --model-path ${CKPT} \
     --question-file ${EVAL}/mmbench/$SPLIT.tsv \
     --answers-file ${EVAL}/mmbench/answers/$SPLIT/${CKPT_NAME}.jsonl \
@@ -21,5 +21,5 @@ python scripts/convert_mmbench_for_submission.py \
     --annotation-file ${EVAL}/mmbench/$SPLIT.tsv \
     --result-dir ${EVAL}/mmbench/answers/$SPLIT \
     --upload-dir ${EVAL}/mmbench/answers_upload/$SPLIT \
-    --experiment ${CKPT_NAME}
+    --experiment ${CKPT_NAME} > ${EVAL}/mmbench/${CKPT_NAME}-cn.txt
 	
