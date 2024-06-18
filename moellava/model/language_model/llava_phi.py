@@ -66,8 +66,12 @@ class LlavaPhiForCausalLM(PhiForCausalLM, LlavaMetaForCausalLM):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         images: Optional[torch.FloatTensor] = None,
+        dino_images: Optional[torch.FloatTensor] = None,
+        ocr_images: Optional[torch.FloatTensor] = None,
+        graph_images: Optional[torch.FloatTensor] = None,
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
+        # print('forward_keys: ', 'images', type(images[0]), 'dino_images', type(dino_images[0]), 'ocr_images', type(ocr_images[0]), 'graph_images', type(graph_images[0]))
 
         # import ipdb
         # ipdb.set_trace()
@@ -86,7 +90,10 @@ class LlavaPhiForCausalLM(PhiForCausalLM, LlavaMetaForCausalLM):
                 attention_mask,
                 past_key_values,
                 labels,
-                images
+                images,
+                dino_images,
+                ocr_images,
+                graph_images
             )
 
         # dist.barrier()
@@ -126,6 +133,9 @@ class LlavaPhiForCausalLM(PhiForCausalLM, LlavaMetaForCausalLM):
                 "use_cache": kwargs.get("use_cache"),
                 "attention_mask": attention_mask,
                 "images": kwargs.get("images", None),
+                "dino_images": kwargs.get("dino_images", None),
+                "ocr_images": kwargs.get("ocr_images", None),
+                "graph_images": kwargs.get("graph_images", None)
             }
         )
         return model_inputs

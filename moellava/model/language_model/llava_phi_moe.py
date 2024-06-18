@@ -320,6 +320,9 @@ class MoELLaVAPhiForCausalLM(PhiForCausalLM, LlavaMetaForCausalLM):
             output_attentions: Optional[bool] = None,
             output_hidden_states: Optional[bool] = None,
             images: Optional[torch.FloatTensor] = None,
+            dino_images: Optional[torch.FloatTensor] = None,
+            ocr_images: Optional[torch.FloatTensor] = None,
+            graph_images: Optional[torch.FloatTensor] = None,
             return_dict: Optional[bool] = None,
     ) -> Union[Tuple, MoECausalLMOutputWithPast]:
         # print('before prepare_inputs_labels_for_multimodal')
@@ -339,7 +342,10 @@ class MoELLaVAPhiForCausalLM(PhiForCausalLM, LlavaMetaForCausalLM):
                 attention_mask,
                 past_key_values,
                 labels,
-                images
+                images,
+                dino_images,
+                ocr_images,
+                graph_images
             )
         # import ipdb
         # ipdb.set_trace()
@@ -384,7 +390,8 @@ class MoELLaVAPhiForCausalLM(PhiForCausalLM, LlavaMetaForCausalLM):
                     moe_losses.append(moe_loss)
             moe_loss = self.router_aux_loss_coef * sum(moe_losses)
             if labels is not None:
-                print(loss, sum(moe_losses), loss + moe_loss)
+                # TODO print loss
+                # print(loss, sum(moe_losses), loss + moe_loss)
                 loss += moe_loss
         # import ipdb
         # ipdb.set_trace()
@@ -421,6 +428,9 @@ class MoELLaVAPhiForCausalLM(PhiForCausalLM, LlavaMetaForCausalLM):
                 "use_cache": kwargs.get("use_cache"),
                 "attention_mask": attention_mask,
                 "images": kwargs.get("images", None),
+                "dino_images": kwargs.get("dino_images", None),
+                "ocr_images": kwargs.get("ocr_images", None),
+                "graph_images": kwargs.get("graph_images", None)
             }
         )
         return model_inputs
