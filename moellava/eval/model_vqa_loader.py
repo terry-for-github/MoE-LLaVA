@@ -29,11 +29,14 @@ def get_chunk(lst, n, k):
 
 # Custom dataset class
 class CustomDataset(Dataset):
-    def __init__(self, questions, image_folder, tokenizer, image_processor, model_config):
+    def __init__(self, questions, image_folder, tokenizer, image_processor, dino_processor, ocr_processor, graph_processor, model_config): # 
         self.questions = questions
         self.image_folder = image_folder
         self.tokenizer = tokenizer
         self.image_processor = image_processor
+        self.dino_processor = dino_processor
+        self.ocr_processor = ocr_processor
+        self.graph_processor = graph_processor
         self.model_config = model_config
 
     def __getitem__(self, index):
@@ -51,20 +54,23 @@ class CustomDataset(Dataset):
         prompt = conv.get_prompt()
 
         image = Image.open(os.path.join(self.image_folder, image_file)).convert('RGB')
-        image_tensor = process_images([image], self.image_processor, self.model_config)[0]
-
+        image_tensor, dino_tensor, ocr_tensor, graph_tensor = process_images([image], self.image_processor, self.dino_processor, self.ocr_processor, self.graph_processor, self.model_config) #  
+        image_tensor = image_tensor[0]
+        dino_tensor = dino_tensor[0]
+        ocr_tensor = ocr_tensor[0]
+        graph_tensor = graph_tensor[0]
         input_ids = tokenizer_image_token(prompt, self.tokenizer, IMAGE_TOKEN_INDEX, return_tensors='pt')
 
-        return input_ids, image_tensor
+        return input_ids, image_tensor, dino_tensor, ocr_tensor, graph_tensor
 
     def __len__(self):
         return len(self.questions)
 
 
 # DataLoader
-def create_data_loader(questions, image_folder, tokenizer, image_processor, model_config, batch_size=1, num_workers=4):
+def create_data_loader(questions, image_folder, tokenizer, image_processor, dino_processor, ocr_processor, graph_processor, model_config, batch_size=1, num_workers=4): # 
     assert batch_size == 1, "batch_size must be 1"
-    dataset = CustomDataset(questions, image_folder, tokenizer, image_processor, model_config)
+    dataset = CustomDataset(questions, image_folder, tokenizer, image_processor, dino_processor, ocr_processor, graph_processor, model_config) # 
     data_loader = DataLoader(dataset, batch_size=batch_size, num_workers=num_workers, shuffle=False)
     return data_loader
 
@@ -82,6 +88,9 @@ def eval_model(args):
         fea_hooks = get_gating_logit_by_hook(model)
         all_gating_logits = {}
     image_processor = processor['image']
+    dino_processor = processor['dino_image']
+    ocr_processor = processor['ocr_image']
+    graph_processor = processor['graph_image']
     questions = [json.loads(q) for q in open(os.path.expanduser(args.question_file), "r")]
     questions = get_chunk(questions, args.num_chunks, args.chunk_idx)
     answers_file = os.path.expanduser(args.answers_file)
@@ -92,10 +101,10 @@ def eval_model(args):
         args.conv_mode = args.conv_mode + '_mmtag'
         print(f'It seems that this is a plain model, but it is not using a mmtag prompt, auto switching to {args.conv_mode}.')
 
-    data_loader = create_data_loader(questions, args.image_folder, tokenizer, image_processor, model.config)
+    data_loader = create_data_loader(questions, args.image_folder, tokenizer, image_processor, dino_processor, ocr_processor, graph_processor, model.config) # 
 
     cnt = -1
-    for (input_ids, image_tensor), line in tqdm(zip(data_loader, questions), total=len(questions)):
+    for (input_ids, image_tensor, dino_tensor, ocr_tensor, graph_tensor), line in tqdm(zip(data_loader, questions), total=len(questions)): # 
         cnt += 1
         # if cnt == 30:
         #     break
@@ -103,7 +112,10 @@ def eval_model(args):
         cur_prompt = line["text"]
 
         input_ids = input_ids.to(device='cuda', non_blocking=True)
-
+        image_tensor = image_tensor.to(dtype=torch.float16, device='cuda', non_blocking=True)
+        dino_tensor = dino_tensor.to(dtype=torch.float16, device='cuda', non_blocking=True)
+        ocr_tensor = ocr_tensor.to(dtype=torch.float16, device='cuda', non_blocking=True)
+        graph_tensor = graph_tensor.to(dtype=torch.float16, device='cuda', non_blocking=True)
         conv = conv_templates[args.conv_mode].copy()
         stop_str = conv.sep if conv.sep_style != SeparatorStyle.TWO else conv.sep2
         keywords = [stop_str]
@@ -112,11 +124,14 @@ def eval_model(args):
         with torch.inference_mode():
             output_ids = model.generate(
                 input_ids,
-                images=image_tensor.to(dtype=torch.float16, device='cuda', non_blocking=True),
-                do_sample=True if args.temperature > 0 else False,
-                temperature=args.temperature,
-                top_p=args.top_p,
-                num_beams=args.num_beams,
+                images=image_tensor,
+                dino_images=dino_tensor,
+                ocr_images=ocr_tensor,
+                graph_images=graph_tensor,
+                do_sample=False,
+                # temperature=args.temperature,
+                # top_p=args.top_p,
+                # num_beams=args.num_beams,
                 max_new_tokens=args.max_new_tokens,
                 use_cache=True if args.return_gating_logit is None else False,
                 stopping_criteria=stopping_criteria

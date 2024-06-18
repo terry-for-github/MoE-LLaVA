@@ -38,6 +38,9 @@ def eval_model(args):
         fea_hooks = get_gating_logit_by_hook(model)
         all_gating_logits = {}
     image_processor = processor['image']
+    dino_processor = processor['dino_image']
+    ocr_processor = processor['ocr_image']
+    graph_processor = processor['graph_image']
     questions = json.load(open(os.path.expanduser(args.question_file), "r"))
     questions = get_chunk(questions, args.num_chunks, args.chunk_idx)
     answers_file = os.path.expanduser(args.answers_file)
@@ -57,6 +60,12 @@ def eval_model(args):
             image = Image.open(os.path.join(args.image_folder, image_file))
             image_tensor = image_processor.preprocess(image, return_tensors='pt')['pixel_values'][0]
             images = image_tensor.unsqueeze(0).half().cuda()
+            dino_tensor = dino_processor.preprocess(image, return_tensors='pt')['pixel_values'][0]
+            dino_images = dino_tensor.unsqueeze(0).half().cuda()
+            ocr_tensor = ocr_processor.preprocess(image, return_tensors='pt')['pixel_values'][0]
+            ocr_images = ocr_tensor.unsqueeze(0).half().cuda()
+            graph_tensor = graph_processor.preprocess(image)
+            graph_images = graph_tensor.half().cuda()
             if getattr(model.config, 'mm_use_im_start_end', False):
                 qs = DEFAULT_IM_START_TOKEN + DEFAULT_IMAGE_TOKEN + DEFAULT_IM_END_TOKEN + '\n' + qs
             else:
@@ -64,6 +73,9 @@ def eval_model(args):
             cur_prompt = '<image>' + '\n' + cur_prompt
         else:
             images = None
+            dino_images = None
+            ocr_images = None
+            graph_images = None
 
         if args.single_pred_prompt:
             qs = qs + '\n' + "Answer with the option's letter from the given choices directly."
@@ -75,6 +87,7 @@ def eval_model(args):
         prompt = conv.get_prompt()
 
         input_ids = tokenizer_image_token(prompt, tokenizer, IMAGE_TOKEN_INDEX, return_tensors='pt').unsqueeze(0).cuda()
+        # print(input_ids)
 
         conv = conv_templates[args.conv_mode].copy()
         stop_str = conv.sep if conv.sep_style != SeparatorStyle.TWO else conv.sep2
@@ -84,9 +97,12 @@ def eval_model(args):
         with torch.inference_mode():
             output_ids = model.generate(
                 input_ids,
+                # attention_mask=torch.ones_like(input_ids, device=input_ids.device, dtype=torch.bool),
                 images=images,
-                do_sample=True if args.temperature > 0 else False,
-                temperature=args.temperature,
+                dino_images=dino_images,
+                ocr_images=ocr_images,
+                graph_images=graph_images,
+                do_sample=False,
                 max_new_tokens=1024,
                 use_cache=True if args.return_gating_logit is None else False,
                 stopping_criteria=stopping_criteria,
@@ -106,7 +122,7 @@ def eval_model(args):
         # ipdb.set_trace()
         input_token_len = input_ids.shape[1]
         n_diff_input_output = (input_ids != output_ids[:, :input_token_len]).sum().item()
-        print(output_ids[:, input_token_len:])
+        # print(output_ids[:, input_token_len:])
         if n_diff_input_output > 0:
             print(f'[Warning] {n_diff_input_output} output_ids are not the same as the input_ids')
         outputs = tokenizer.batch_decode(output_ids[:, input_token_len:], skip_special_tokens=True)[0]
@@ -114,7 +130,7 @@ def eval_model(args):
         if outputs.endswith(stop_str):
             outputs = outputs[:-len(stop_str)]
         outputs = outputs.strip()
-        print(outputs)
+        # print(outputs)
         # prompt for answer
         if args.answer_prompter:
             outputs_reasoning = outputs

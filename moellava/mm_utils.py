@@ -25,19 +25,38 @@ def expand2square(pil_img, background_color):
         return result
 
 
-def process_images(images, image_processor, model_cfg):
+def process_images(images, image_processor, dino_processor, ocr_processor, graph_processor, model_cfg): # 
     image_aspect_ratio = getattr(model_cfg, "image_aspect_ratio", None)
     new_images = []
+    dino_images = []
+    ocr_images = []
+    graph_images = []
     if image_aspect_ratio == 'pad':
         for image in images:
-            image = expand2square(image, tuple(int(x*255) for x in image_processor.image_mean))
-            image = image_processor.preprocess(image, return_tensors='pt')['pixel_values'][0]
+            new_image = expand2square(image, tuple(int(x*255) for x in image_processor.image_mean))
+            dino_image = expand2square(image, tuple(int(x*255) for x in dino_processor.image_mean))
+            ocr_image = expand2square(image, tuple(int(x*255) for x in ocr_processor.image_mean))
+            graph_image = expand2square(image, tuple(int(x*255) for x in graph_processor.image_mean))
+            image = image_processor.preprocess(new_image, return_tensors='pt')['pixel_values'][0]
+            dino_image = dino_processor.preprocess(dino_image, return_tensors='pt')['pixel_values'][0]
+            ocr_image = ocr_processor.preprocess(ocr_image, return_tensors='pt')['pixel_values'][0]
+            graph_image = graph_processor.preprocess(graph_image)
             new_images.append(image)
+            dino_images.append(dino_image)
+            ocr_images.append(ocr_image)
+            graph_images.append(graph_image)
     else:
-        return image_processor(images, return_tensors='pt')['pixel_values']
+        new_images = image_processor(images, return_tensors='pt')['pixel_values']
+        dino_images = dino_processor(images, return_tensors='pt')['pixel_values']
+        ocr_images = ocr_processor(images, return_tensors='pt')['pixel_values']
+        graph_images = graph_processor(images)
+        return new_images, dino_images, ocr_images, graph_images # 
     if all(x.shape == new_images[0].shape for x in new_images):
         new_images = torch.stack(new_images, dim=0)
-    return new_images
+        dino_images = torch.stack(dino_images, dim=0)
+        ocr_images = torch.stack(ocr_images, dim=0)
+        graph_images = torch.stack(graph_images, dim=0)
+    return new_images, dino_images, ocr_images, graph_images # 
 
 
 def tokenizer_image_token(prompt, tokenizer, image_token_index=IMAGE_TOKEN_INDEX, return_tensors=None):
