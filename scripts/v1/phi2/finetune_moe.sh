@@ -17,19 +17,19 @@ HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1 deepspeed moellava/train/train_mem.
     --moe_mode ${moe_mode} --use_residual ${use_residual} --router_aux_loss_coef ${router_aux_loss_coef} \
     --train_modules fc1 fc2 wg \
     --deepspeed ./scripts/zero2.json \
-    --model_name_or_path ./checkpoints/llavaphi-2.7b-finetune-mousi \
+    --model_name_or_path ./checkpoints/llavaphi-2.7b-finetune-mousi-linear-grapht \
     --version phi \
     --data_path ${JSON_FOLDER}/llava_image_tune_.json ${JSON_FOLDER}/nlp_tune.json \
     --image_folder ${IMAGE_FOLDER} \
     --image_tower ${MODEL_FOLDER}/openai_clip-vit-large-patch14-336 \
-    --image_projector_type mlp2x_gelu \
+    --image_projector_type linear \
     --mm_vision_select_layer -2 \
     --mm_use_im_start_end False \
     --mm_use_im_patch_token False \
     --image_aspect_ratio pad \
     --group_by_modality_length True \
     --bf16 True \
-    --output_dir ./checkpoints/llavaphi-2.7b-finetune-moe-mousi \
+    --output_dir ./checkpoints/llavaphi-2.7b-finetune-moe-mousi-linear-grapht \
     --num_train_epochs 1 \
     --per_device_train_batch_size 1 \
     --per_device_eval_batch_size 4 \

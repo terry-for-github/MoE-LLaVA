@@ -2,7 +2,7 @@
 
 
 CONV="phi"
-CKPT_NAME="llavaphi-2.7b-finetune-moe-mousi"
+CKPT_NAME="llavaphi-2.7b-finetune-moe-mousi-linear-grapht"
 CKPT="checkpoints/${CKPT_NAME}"
 EVAL="/home/hanqing/data/eval"
 deepspeed --include localhost:$1 --master_port $(($1 + 29500)) moellava/eval/model_vqa_science.py \

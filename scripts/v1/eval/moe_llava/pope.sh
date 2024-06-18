@@ -2,7 +2,7 @@
 
 
 CONV="phi"
-CKPT_NAME="llavaphi-2.7b-finetune-moe-mousi"
+CKPT_NAME="llavaphi-2.7b-finetune-moe-mousi-linear-grapht"
 CKPT="checkpoints/${CKPT_NAME}"
 EVAL="/home/hanqing/data/eval"
 

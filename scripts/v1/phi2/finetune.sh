@@ -6,6 +6,8 @@ DATA_FOLDER="${HOME_FOLDER}/data"
 MODEL_FOLDER="${HOME_FOLDER}/models"
 JSON_FOLDER="${DATA_FOLDER}/MoE-LLaVA-Json"
 IMAGE_FOLDER="${DATA_FOLDER}/MoE-LLaVA-Image"
+CHECKPOINTS_FOLDER="./checkpoints/llavaphi-2.7b-pretrain-mousi-linear-test"
+
 cd ${CODE_FOLDER}/MoE-LLaVA
 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1 deepspeed moellava/train/train_mem.py \
     --deepspeed ./scripts/zero2.json \
@@ -16,19 +18,19 @@ HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1 deepspeed moellava/train/train_mem.
                 ${JSON_FOLDER}/svit_tune_157k.json ${JSON_FOLDER}/nlp_tune.json \
     --image_folder ${IMAGE_FOLDER} \
     --image_tower ${MODEL_FOLDER}/openai_clip-vit-large-patch14-336 \
-    --image_projector_type mlp2x_gelu \
-    --pretrain_mm_mlp_adapter ./checkpoints/llavaphi-2.7b-pretrain-mousi/mm_projector.bin \
-    --pretrain_dino_mm_mlp_adapter ./checkpoints/llavaphi-2.7b-pretrain-mousi/dino_mm_projector.bin \
-    --pretrain_ocr_mm_mlp_adapter ./checkpoints/llavaphi-2.7b-pretrain-mousi/ocr_mm_projector.bin \
-    --pretrain_fusion_mm_mlp_adapter ./checkpoints/llavaphi-2.7b-pretrain-mousi/fusion_mm_projector.bin \
-    --pretrain_graph_mm_mlp_adapter ./checkpoints/llavaphi-2.7b-pretrain-mousi/graph_mm_projector.bin \
+    --image_projector_type linear \
+    --pretrain_mm_mlp_adapter ${CHECKPOINTS_FOLDER}/mm_projector.bin \
+    --pretrain_dino_mm_mlp_adapter ${CHECKPOINTS_FOLDER}/dino_mm_projector.bin \
+    --pretrain_ocr_mm_mlp_adapter ${CHECKPOINTS_FOLDER}/ocr_mm_projector.bin \
+    --pretrain_fusion_mm_mlp_adapter ${CHECKPOINTS_FOLDER}/fusion_mm_projector.bin \
+    --pretrain_graph_mm_mlp_adapter ${CHECKPOINTS_FOLDER}/graph_mm_projector.bin \
     --mm_vision_select_layer -2 \
     --mm_use_im_start_end False \
     --mm_use_im_patch_token False \
     --image_aspect_ratio pad \
     --group_by_modality_length True \
     --bf16 True \
-    --output_dir ./checkpoints/llavaphi-2.7b-finetune-mousi \
+    --output_dir ./checkpoints/llavaphi-2.7b-finetune-mousi-linear-test \
     --num_train_epochs 1 \
     --per_device_train_batch_size 4 \
     --per_device_eval_batch_size 4 \
