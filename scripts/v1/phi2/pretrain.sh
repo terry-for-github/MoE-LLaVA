@@ -20,7 +20,7 @@ HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1 deepspeed moellava/train/train_mem.
     --mm_use_im_start_end False \
     --mm_use_im_patch_token False \
     --bf16 True \
-    --output_dir ./checkpoints/llavaphi-2.7b-pretrain-mousi-test \
+    --output_dir ./checkpoints/llavaphi-2.7b-pretrain-mousi-linear-test \
     --num_train_epochs 1 \
     --per_device_train_batch_size 16 \
     --per_device_eval_batch_size 4 \
