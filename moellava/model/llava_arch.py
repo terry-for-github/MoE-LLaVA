@@ -19,6 +19,7 @@ from json import load
 import numpy
 import torch
 import torch.nn.functional as F
+import os
 
 
 from .multimodal_encoder.builder import build_image_tower, build_video_tower
@@ -37,7 +38,7 @@ class LlavaMetaModel:
             self.image_tower = build_image_tower(config, load_model="clip", delay_load=True)
             self.dino_tower = build_image_tower(config, load_model="dino", delay_load=True)
             self.ocr_tower = build_image_tower(config, load_model="ocr", delay_load=True)
-            # self.graph_tower = build_image_tower(config, load_model="graph", delay_load=True)
+            self.graph_tower = build_image_tower(config, load_model="graph", delay_load=True)
           
         if getattr(config, "mm_video_tower", None) is not None:
             self.video_tower = build_video_tower(config, delay_load=True)
@@ -45,7 +46,7 @@ class LlavaMetaModel:
             self.mm_projector = build_projector(config)
             self.dino_mm_projector = build_projector(config, load_model="dino", m=2)
             self.ocr_mm_projector = build_projector(config, load_model="ocr", m=2)
-            # self.graph_tower = build_projector(config, load_model="graph")
+            self.graph_mm_projector = build_projector(config, load_model="graph")
             self.fusion_mm_projector = build_projector(config, load_model="fusion")
 
 
@@ -65,11 +66,11 @@ class LlavaMetaModel:
             if type(ocr_tower) is list:
                 ocr_tower = ocr_tower[0]
             return ocr_tower
-        # elif load_model == 'graph':
-        #     graph_tower = getattr(self, 'graph_tower', None)
-        #     if type(graph_tower) is list:
-        #         graph_tower = graph_tower[0]
-        #     return graph_tower
+        elif load_model == 'graph':
+            graph_tower = getattr(self, 'graph_tower', None)
+            if type(graph_tower) is list:
+                graph_tower = graph_tower[0]
+            return graph_tower
         else:
             raise ValueError(f'Unknown load_model: {load_model}')
 
@@ -93,7 +94,7 @@ class LlavaMetaModel:
         pretrain_mm_mlp_adapter = model_args.pretrain_mm_mlp_adapter
         pretrain_dino_mm_mlp_adapter = model_args.pretrain_dino_mm_mlp_adapter
         pretrain_ocr_mm_mlp_adapter = model_args.pretrain_ocr_mm_mlp_adapter
-        # pretrain_graph_mm_mlp_adapter = model_args.pretrain_graph_mm_mlp_adapter
+        pretrain_graph_mm_mlp_adapter = model_args.pretrain_graph_mm_mlp_adapter
         pretrain_fusion_mm_mlp_adapter = model_args.pretrain_fusion_mm_mlp_adapter
 
         # ==========================================================================
@@ -140,18 +141,18 @@ class LlavaMetaModel:
                     ocr_tower = self.ocr_tower
                 ocr_tower.load_model()
 
-            # if self.get_image_tower(load_model = "graph") is None:
-            #     graph_tower = build_image_tower(model_args, load_model="graph")
-            #     if fsdp is not None and len(fsdp) > 0:
-            #         self.graph_tower = [graph_tower]
-            #     else:
-            #         self.graph_tower = graph_tower
-            # else:
-            #     if fsdp is not None and len(fsdp) > 0:
-            #         graph_tower = self.graph_tower[0]
-            #     else:
-            #         graph_tower = self.graph_tower
-            #     graph_tower.load_model()
+            if self.get_image_tower(load_model = "graph") is None:
+                graph_tower = build_image_tower(model_args, load_model="graph")
+                if fsdp is not None and len(fsdp) > 0:
+                    self.graph_tower = [graph_tower]
+                else:
+                    self.graph_tower = graph_tower
+            else:
+                if fsdp is not None and len(fsdp) > 0:
+                    graph_tower = self.graph_tower[0]
+                else:
+                    graph_tower = self.graph_tower
+                graph_tower.load_model()
 
 
         self.config.mm_video_tower = video_tower
@@ -204,8 +205,8 @@ class LlavaMetaModel:
         if getattr(self, 'ocr_mm_projector', None) is None:
             self.ocr_mm_projector = build_projector(self.config, load_model="ocr", m=2)
         
-        # if getattr(self, 'graph_mm_projector', None) is None:
-        #     self.graph_mm_projector = build_projector(self.config, load_model="graph")
+        if getattr(self, 'graph_mm_projector', None) is None:
+            self.graph_mm_projector = build_projector(self.config, load_model="graph")
 
         if getattr(self, 'fusion_mm_projector', None) is None:
             self.fusion_mm_projector = build_projector(self.config, load_model='fusion')
@@ -221,6 +222,7 @@ class LlavaMetaModel:
 
             print("Loading pretrained DINO adpater!!!")
             dino_mm_projector_weights = torch.load(pretrain_dino_mm_mlp_adapter, map_location='cpu')
+            print('dino_key:', dino_mm_projector_weights.keys())
             def get_w(weights, keyword):
                 return {k.split(keyword + '.')[1]: v for k, v in weights.items() if keyword in k}
 
@@ -230,19 +232,21 @@ class LlavaMetaModel:
 
             print("Loading pretrained OCR adpater!!!")
             ocr_mm_projector_weights = torch.load(pretrain_ocr_mm_mlp_adapter, map_location='cpu')
+            print('ocr_key:', ocr_mm_projector_weights.keys())
             def get_w(weights, keyword):
                 return {k.split(keyword + '.')[1]: v for k, v in weights.items() if keyword in k}
 
             self.ocr_mm_projector.load_state_dict(get_w(ocr_mm_projector_weights, 'ocr_mm_projector'))
 
-        # if pretrain_graph_mm_mlp_adapter is not None:
+        if pretrain_graph_mm_mlp_adapter is not None:
 
-        #     print("Loading pretrained scene graph adpater!!!")
-        #     graph_mm_projector_weights = torch.load(pretrain_graph_mm_mlp_adapter, map_location='cpu')
-        #     def get_w(weights, keyword):
-        #         return {k.split(keyword + '.')[1]: v for k, v in weights.items() if keyword in k}
+            print("Loading pretrained scene graph adpater!!!")
+            graph_mm_projector_weights = torch.load(pretrain_graph_mm_mlp_adapter, map_location='cpu')
+            print('graph_key:', pretrain_graph_mm_mlp_adapter, graph_mm_projector_weights.keys())
+            def get_w(weights, keyword):
+                return {k.split(keyword + '.')[1]: v for k, v in weights.items() if keyword in k}
 
-        #     self.graph_mm_projector.load_state_dict(get_w(graph_mm_projector_weights, 'graph_mm_projector'))
+            self.graph_mm_projector.load_state_dict(get_w(graph_mm_projector_weights, 'graph_mm_projector'))
 
         if pretrain_fusion_mm_mlp_adapter is not None:
 
@@ -254,7 +258,7 @@ class LlavaMetaModel:
             self.fusion_mm_projector.load_state_dict(get_w(fusion_mm_projector_weights, 'fusion_mm_projector'))
 
 class LlavaMetaForCausalLM(ABC):
-
+    cnt = 0
     @abstractmethod
     def get_model(self):
         pass
@@ -268,8 +272,13 @@ class LlavaMetaForCausalLM(ABC):
     def get_ocr_tower(self):
         return self.get_model().get_image_tower(load_model="ocr")
 
-    # def get_graph_tower(self):
-    #     return self.get_model().get_graph_tower(load_model="graph")
+    def get_vision_preprocessor(self, load_model):
+        if not hasattr(self, load_model + '_preprocessor'):
+            setattr(self, load_model + '_preprocessor', self.get_model().get_image_tower(load_model=load_model).image_processor)
+        return getattr(self, load_model + '_preprocessor')
+
+    def get_graph_tower(self):
+        return self.get_model().get_image_tower(load_model="graph")
 
     def get_video_tower(self):
         return self.get_model().get_video_tower()
@@ -288,6 +297,8 @@ class LlavaMetaForCausalLM(ABC):
         # paras = [para for para in self.get_model().mm_projector.parameters()]
         # print('image_features_clip_dtype: ', image_features_clip.dtype, paras[0].dtype)
         image_features_clip = self.get_model().mm_projector.forward_image(image_features_clip)
+        if LlavaMetaForCausalLM.cnt % 10 == 0 and os.environ['RANK'] == '0':
+            print('clip', next(self.get_model().mm_projector.image_spatial_proj.parameters()))
         return image_features_clip
 
     #HACK specify m = 2
@@ -296,6 +307,8 @@ class LlavaMetaForCausalLM(ABC):
         bs, num_patches, dim = image_features_dino.shape
         image_features_dino = image_features_dino.view(bs, num_patches // m, -1)
         image_features_dino = self.get_model().dino_mm_projector.forward_image(image_features_dino)
+        if LlavaMetaForCausalLM.cnt % 10 == 0 and os.environ['RANK'] == '0':
+            print('dino', next(self.get_model().dino_mm_projector.image_spatial_proj.parameters()))
         return image_features_dino
 
     def encode_images_withocr(self, images, m = 2):
@@ -303,25 +316,33 @@ class LlavaMetaForCausalLM(ABC):
         bs, num_patches, dim = image_features_ocr.shape
         image_features_ocr = image_features_ocr.view(bs, num_patches // m, -1)
         image_features_ocr = self.get_model().ocr_mm_projector.forward_image(image_features_ocr)
+        if LlavaMetaForCausalLM.cnt % 10 == 0 and os.environ['RANK'] == '0':
+            print('ocr', next(self.get_model().ocr_mm_projector.image_spatial_proj.parameters()))
         return image_features_ocr
 
-    # def encode_images_withgraph(self, images, m = 2):
-    #     image_features_graph = self.get_model().get_image_tower(load_model="graph")(images)
-    #     ### 
-    #     # bs, num_patches, dim = image_features_graph.shape
-    #     # image_features_graph = image_features_graph.view(bs, num_patches // m, -1)
-    #     image_features_graph = self.get_model().graph_mm_projector.forward_image(image_features_graph)
-    #     return image_features_graph
+    def encode_images_withgraph(self, images, m = 2):
+        image_features_graph = self.get_model().get_image_tower(load_model="graph")(images)
+        ### 
+        # bs, num_patches, dim = image_features_graph.shape
+        # image_features_graph = image_features_graph.view(bs, num_patches // m, -1)
+        image_features_graph = self.get_model().graph_mm_projector.forward_image(image_features_graph)
+        if LlavaMetaForCausalLM.cnt % 10 == 0 and os.environ['RANK'] == '0':
+            print('graph', next(self.get_model().graph_mm_projector.image_spatial_proj.parameters()))
+        return image_features_graph
 
     def encode_images_withexp(self, images, m = [1,2,2]):
-        image_features_clip = self.encode_images_withclip(images, m = m[0])
-        image_features_dino = self.encode_images_withdino(images, m = m[1])
-        image_features_ocr = self.encode_images_withocr(images, m = m[2])
-        # image_features_graph = self.encode_images_withgraph(images)
-        image_features = torch.cat([image_features_ocr, image_features_dino, image_features_clip], dim=1) ## image_features_graph
+        
+        image_features_clip = self.encode_images_withclip(images[0], m = m[0])
+        image_features_dino = self.encode_images_withdino(images[1], m = m[1])
+        image_features_ocr = self.encode_images_withocr(images[2], m = m[2])
+        image_features_graph = self.encode_images_withgraph(images[3])
+        image_features = torch.cat([image_features_ocr, image_features_dino, image_features_clip, image_features_graph], dim=1) ## 
         # print(image_features.shape)
         image_features = F.gelu(image_features)
         image_features = self.get_model().fusion_mm_projector.forward_image(image_features)
+        if LlavaMetaForCausalLM.cnt % 10 == 0 and os.environ['RANK'] == '0':
+            print('fusion', next(self.get_model().fusion_mm_projector.image_spatial_proj.parameters()))
+        LlavaMetaForCausalLM.cnt += 1
         return image_features
 
     def encode_videos(self, videos):  # [mini_b, c, t, h, w]
@@ -330,7 +351,7 @@ class LlavaMetaForCausalLM(ABC):
         return video_features
 
     def prepare_inputs_labels_for_multimodal(
-        self, input_ids, position_ids, attention_mask, past_key_values, labels, images
+        self, input_ids, position_ids, attention_mask, past_key_values, labels, images, dino_images, ocr_images, graph_images# 
     ):
 
         # ====================================================================================================
@@ -362,15 +383,19 @@ class LlavaMetaForCausalLM(ABC):
         # video_idx = []
         # print(f'rank {dist.get_rank()}', 'image_idx', image_idx)
         # print(f'rank {dist.get_rank()}', 'video_idx', video_idx)
-        images_minibatch = torch.stack([images[idx] for idx in image_idx]) if len(image_idx) > 0 else []  # mini_b c h w
+        images = torch.stack([images[idx] for idx in image_idx]) if len(image_idx) > 0 else []  # mini_b c h w
+        dino_images = torch.stack([dino_images[idx] for idx in image_idx]) if len(image_idx) > 0 else []
+        ocr_images = torch.stack([ocr_images[idx] for idx in image_idx]) if len(image_idx) > 0 else []
+        graph_images = [images[idx] for idx in image_idx] if len(image_idx) > 0 else []
+
+        images_minibatch = [images, dino_images, ocr_images, graph_images]
         # images_minibatch = numpy.concatenate([images[idx] for idx in image_idx], axis=0)
-        # images_minibatch = images
         videos_minibatch = torch.stack([images[idx] for idx in video_idx]) if len(video_idx) > 0 else []  # mini_b c t h w
         # videos_minibatch = []
 
         tmp_image_features = [None] * (len(image_idx) + len(video_idx))
         # if True:
-        if getattr(images_minibatch, 'ndim', 0) == 4:  # batch consists of images, [mini_b, c, h, w]
+        if getattr(images, 'ndim', 0) == 4:  # batch consists of images, [mini_b, c, h, w]
             if image_tower is not None:
                 # print(f'rank {dist.get_rank()}', 'image batch', images_minibatch.shape)
                 # image_features_minibatch = self.encode_images(images_minibatch)  # [mini_b, l, c]

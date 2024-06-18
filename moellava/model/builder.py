@@ -506,13 +506,16 @@ def load_pretrained_model(model_path, model_base, model_name, load_8bit=False, l
                 ocr_tower.load_model()
             ocr_tower.to(device=device, dtype=torch.float16)
 
-            # graph_tower = model.get_graph_tower()
-            # if not graph_tower.is_loaded:
-            #     graph_tower.load_model()
-            # graph_tower.to(device=device, dtype=torch.float16)
+            graph_tower = model.get_graph_tower()
+            if not graph_tower.is_loaded:
+                graph_tower.load_model()
+            graph_tower.to(device=device, dtype=torch.float16)
 
             image_processor = image_tower.image_processor
             processor['image'] = image_processor
+            processor['dino_image'] = dino_tower.image_processor
+            processor['ocr_image'] = ocr_tower.image_processor
+            processor['graph_image'] = graph_tower.image_processor
 
         if model.config.mm_video_tower is not None:
             video_tower = model.get_video_tower()

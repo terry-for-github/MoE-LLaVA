@@ -97,6 +97,7 @@
 import torch
 import torch.nn as nn
 from torchvision import transforms
+import os
 
 
 from transformers import CLIPVisionModel, CLIPImageProcessor, CLIPVisionConfig
@@ -127,7 +128,7 @@ class OCRVisionTower(nn.Module):
     def load_model(self):
         self.image_processor = LayoutLMv3ImageProcessor.from_pretrained("microsoft/layoutlmv3-large")
 
-        self.clip_vision_tower = CLIPVisionModel.from_pretrained(self.vision_tower_name)
+        # self.clip_vision_tower = CLIPVisionModel.from_pretrained(self.vision_tower_name)
 
         self.vision_tower = LayoutLMv3Model.from_pretrained("microsoft/layoutlmv3-large")
         self.vision_tower.requires_grad_(False)
@@ -146,16 +147,18 @@ class OCRVisionTower(nn.Module):
 
     @torch.no_grad()
     def forward(self, images):
+        # images= torch.stack([self.image_processor.preprocess(i, return_tensors='pt')['pixel_values'][0] for i in images])
+        # print('OCR: rank:', os.environ['LOCAL_RANK'], 'images:', images.device, images.dtype, 'self:', self.device, self.dtype)
         if type(images) is list:
             image_features = []
             for image in images:
                 image_forward_out = self.vision_tower.forward_features(image.to(device=self.device, dtype=self.dtype).unsqueeze(0))
-                image_feature = self.feature_select(image_forward_out).to(image.dtype)
+                image_feature = self.feature_select(image_forward_out).to(dtype=image.dtype)
                 image_features.append(image_feature)
         else:
-            images = self.resize_image(images)
+            # images = self.resize_image(images)
             image_forward_outs = self.vision_tower(pixel_values=images.to(device=self.device, dtype=self.dtype), output_hidden_states=True)
-            image_features = self.feature_select(image_forward_outs).to(images.dtype)
+            image_features = self.feature_select(image_forward_outs).to(dtype=images.dtype)
 
         return image_features
 
@@ -165,16 +168,16 @@ class OCRVisionTower(nn.Module):
 
     @property
     def dtype(self):
-        return self.clip_vision_tower.dtype
+        return self.vision_tower.dtype
 
     @property
     def device(self):
-        return self.clip_vision_tower.device
+        return self.vision_tower.device
 
     @property
     def config(self):
         if self.is_loaded:
-            return self.clip_vision_tower.config
+            return self.vision_tower.config
         else:
             return self.cfg_only
 

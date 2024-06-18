@@ -2,7 +2,7 @@ import os
 from .clip_encoder import CLIPVisionTower
 from .dino_encoder import DINOVisionTower
 from .ocr_encoder import OCRVisionTower
-# from .graph_encoder import SGVisionTower
+from .graph_encoder import SGVisionTower
 import transformers
 a, b, c = transformers.__version__.split('.')[:3]
 if a == '4' and int(b) >= 37:
@@ -22,8 +22,8 @@ def build_image_tower(image_tower_cfg, load_model='clip', **kwargs):
             return DINOVisionTower(image_tower, args=image_tower_cfg, **kwargs)
         elif load_model == 'ocr':
             return OCRVisionTower(image_tower, args=image_tower_cfg, **kwargs)
-        # elif load_model == 'graph':
-        #     return SGVisionTower(image_tower, args=image_tower_cfg, **kwargs)
+        elif load_model == 'graph':
+            return SGVisionTower(image_tower, args=image_tower_cfg, **kwargs)
     if (image_tower if not is_absolute_path_exists else os.path.basename(image_tower)).startswith("google"):
         if load_model == "clip":
             return SiglipVisionTower(image_tower, args=image_tower_cfg, cache_dir='./cache_dir', **kwargs)
@@ -31,8 +31,8 @@ def build_image_tower(image_tower_cfg, load_model='clip', **kwargs):
             return DINOVisionTower(image_tower, args=image_tower_cfg, **kwargs)
         elif load_model == 'ocr':
             return OCRVisionTower(image_tower, args=image_tower_cfg, **kwargs)
-        # elif load_model == 'graph':
-        #     return SGVisionTower(image_tower, args=image_tower_cfg, **kwargs)
+        elif load_model == 'graph':
+            return SGVisionTower(image_tower, args=image_tower_cfg, **kwargs)
 
     if (image_tower if not is_absolute_path_exists else os.path.basename(image_tower)).endswith('LanguageBind_Image'):
         return LanguageBindImageTower(image_tower, args=image_tower_cfg, cache_dir='./cache_dir', **kwargs)

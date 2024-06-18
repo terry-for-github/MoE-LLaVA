@@ -39,8 +39,8 @@ def build_image_projector(config, load_model='clip', m=1, delay_load=False, **kw
             return nn.Linear(1024 * m, config.hidden_size)
         elif load_model == 'fusion':
             return nn.Linear(config.hidden_size, config.hidden_size)
-        # elif load_model == 'graph':
-        #     return nn.Linear(4096, config.hidden_size)
+        elif load_model == 'graph':
+            return nn.Linear(4096, config.hidden_size)
 
     elif projector_type.startswith('qformer'):  # qformer4_36
         qformer_config = cheap_qformer_config_template(config, projector_type) if is_cheap else qformer_config_template(config, projector_type)
@@ -67,8 +67,8 @@ def build_image_projector(config, load_model='clip', m=1, delay_load=False, **kw
                 modules = [nn.Linear(1536 * m, config.hidden_size)]
             elif load_model == 'ocr':
                 modules = [nn.Linear(1024 * m, config.hidden_size)]
-            # elif load_model == 'graph':
-            #     modules = [nn.Linear(4096, config.hidden_size)]
+            elif load_model == 'graph':
+                modules = [nn.Linear(4096, config.hidden_size)]
             elif load_model == 'fusion':
                 modules = [nn.Linear(config.hidden_size, config.hidden_size)]
             else:

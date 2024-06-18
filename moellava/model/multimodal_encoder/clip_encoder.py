@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import os
 
 from transformers import CLIPVisionModel, CLIPImageProcessor, CLIPVisionConfig
 
@@ -40,15 +41,17 @@ class CLIPVisionTower(nn.Module):
 
     @torch.no_grad()
     def forward(self, images):
+        # images= torch.stack([self.image_processor.preprocess(i, return_tensors='pt')['pixel_values'][0] for i in images])
+        # print('clip: rank: ', os.environ['LOCAL_RANK'], 'images:', images.device, images.dtype, 'self:', self.device, self.dtype)
         if type(images) is list:
             image_features = []
             for image in images:
                 image_forward_out = self.image_tower(image.to(device=self.device, dtype=self.dtype).unsqueeze(0), output_hidden_states=True)
-                image_feature = self.feature_select(image_forward_out).to(image.dtype)
+                image_feature = self.feature_select(image_forward_out).to(dtype=image.dtype)
                 image_features.append(image_feature)
         else:
             image_forward_outs = self.image_tower(images.to(device=self.device, dtype=self.dtype), output_hidden_states=True)
-            image_features = self.feature_select(image_forward_outs).to(images.dtype)
+            image_features = self.feature_select(image_forward_outs).to(dtype=images.dtype)
 
         return image_features
 

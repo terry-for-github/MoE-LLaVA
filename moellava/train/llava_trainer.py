@@ -287,16 +287,16 @@ class LLaVATrainer(Trainer):
                 self.model.config.save_pretrained(output_dir)
                 torch.save(weight_to_save, os.path.join(output_dir, f'ocr_mm_projector.bin')) 
             
-            # # Save Fusion Adapter
-            # keys_to_match = ['graph_mm_projector']
-            # if getattr(self.args, "use_im_start_end", False):
-            #     keys_to_match.extend(['embed_tokens', 'embed_in'])
+            # Save graph Adapter
+            keys_to_match = ['graph_mm_projector']
+            if getattr(self.args, "use_im_start_end", False):
+                keys_to_match.extend(['embed_tokens', 'embed_in'])
 
-            # weight_to_save = get_mm_adapter_state_maybe_zero_3(self.model.named_parameters(), keys_to_match)
+            weight_to_save = get_mm_adapter_state_maybe_zero_3(self.model.named_parameters(), keys_to_match)
 
-            # if self.args.local_rank == 0 or self.args.local_rank == -1:
-            #     self.model.config.save_pretrained(output_dir)
-            #     torch.save(weight_to_save, os.path.join(output_dir, f'graph_mm_projector.bin'))
+            if self.args.local_rank == 0 or self.args.local_rank == -1:
+                self.model.config.save_pretrained(output_dir)
+                torch.save(weight_to_save, os.path.join(output_dir, f'graph_mm_projector.bin'))
 
             # Save Fusion Adapter
             keys_to_match = ['fusion_mm_projector']

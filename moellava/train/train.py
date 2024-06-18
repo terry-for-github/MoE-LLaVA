@@ -34,6 +34,7 @@ from moellava.constants import IGNORE_INDEX, IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TO
     MAX_VIDEO_LENGTH
 from torch.utils.data import Dataset
 from moellava.train.llava_trainer import LLaVATrainer
+from transformers import BitImageProcessor, LayoutLMv3ImageProcessor
 
 from moellava import conversation as conversation_lib
 from moellava.model import *
@@ -63,7 +64,7 @@ class ModelArguments:
     pretrain_dino_mm_mlp_adapter: Optional[str] = field(default=None)
     pretrain_ocr_mm_mlp_adapter: Optional[str] = field(default=None)
     pretrain_fusion_mm_mlp_adapter: Optional[str] = field(default=None)
-    # pretrain_graph_mm_mlp_adapter: Optional[str] = field(default=None)
+    pretrain_graph_mm_mlp_adapter: Optional[str] = field(default=None)
     mm_use_im_start_end: bool = field(default=False)
     mm_use_im_patch_token: bool = field(default=True)
     mm_vision_select_feature: Optional[str] = field(default="patch")
@@ -248,15 +249,9 @@ def safe_save_model_for_hf_trainer(trainer: transformers.Trainer,
                 torch.save(weight_to_save, os.path.join(mm_projector_folder, f'{current_folder}.bin'))
             else:
                 torch.save(weight_to_save, os.path.join(output_dir, f'mm_projector.bin'))
+        
         keys_to_match = ['dino_mm_projector']
-        if getattr(trainer.args, "use_im_start_end", False):
-            keys_to_match.extend(['embed_tokens', 'embed_in'])
-
         weight_to_save = get_mm_adapter_state_maybe_zero_3(trainer.model.named_parameters(), keys_to_match)
-        trainer.model.config.save_pretrained(output_dir)
-
-        current_folder = output_dir.split('/')[-1]
-        parent_folder = os.path.dirname(output_dir)
         if trainer.args.local_rank == 0 or trainer.args.local_rank == -1:
             if current_folder.startswith('checkpoint-'):
                 mm_projector_folder = os.path.join(parent_folder, "dino_mm_projector")
@@ -266,14 +261,7 @@ def safe_save_model_for_hf_trainer(trainer: transformers.Trainer,
                 torch.save(weight_to_save, os.path.join(output_dir, f'dino_mm_projector.bin'))
 
         keys_to_match = ['ocr_mm_projector']
-        if getattr(trainer.args, "use_im_start_end", False):
-            keys_to_match.extend(['embed_tokens', 'embed_in'])
-
         weight_to_save = get_mm_adapter_state_maybe_zero_3(trainer.model.named_parameters(), keys_to_match)
-        trainer.model.config.save_pretrained(output_dir)
-
-        current_folder = output_dir.split('/')[-1]
-        parent_folder = os.path.dirname(output_dir)
         if trainer.args.local_rank == 0 or trainer.args.local_rank == -1:
             if current_folder.startswith('checkpoint-'):
                 mm_projector_folder = os.path.join(parent_folder, "ocr_mm_projector")
@@ -283,14 +271,7 @@ def safe_save_model_for_hf_trainer(trainer: transformers.Trainer,
                 torch.save(weight_to_save, os.path.join(output_dir, f'ocr_mm_projector.bin'))
 
         keys_to_match = ['fusion_mm_projector']
-        if getattr(trainer.args, "use_im_start_end", False):
-            keys_to_match.extend(['embed_tokens', 'embed_in'])
-
         weight_to_save = get_mm_adapter_state_maybe_zero_3(trainer.model.named_parameters(), keys_to_match)
-        trainer.model.config.save_pretrained(output_dir)
-
-        current_folder = output_dir.split('/')[-1]
-        parent_folder = os.path.dirname(output_dir)
         if trainer.args.local_rank == 0 or trainer.args.local_rank == -1:
             if current_folder.startswith('checkpoint-'):
                 mm_projector_folder = os.path.join(parent_folder, "fusion_mm_projector")
@@ -298,6 +279,17 @@ def safe_save_model_for_hf_trainer(trainer: transformers.Trainer,
                 torch.save(weight_to_save, os.path.join(mm_projector_folder, f'{current_folder}.bin'))
             else:
                 torch.save(weight_to_save, os.path.join(output_dir, f'fusion_mm_projector.bin'))
+
+        keys_to_match = ['graph_mm_projector']
+        weight_to_save = get_mm_adapter_state_maybe_zero_3(trainer.model.named_parameters(), keys_to_match)
+        if trainer.args.local_rank == 0 or trainer.args.local_rank == -1:
+            if current_folder.startswith('checkpoint-'):
+                mm_projector_folder = os.path.join(parent_folder, "graph_mm_projector")
+                os.makedirs(mm_projector_folder, exist_ok=True)
+                torch.save(weight_to_save, os.path.join(mm_projector_folder, f'{current_folder}.bin'))
+            else:
+                torch.save(weight_to_save, os.path.join(output_dir, f'graph_mm_projector.bin'))
+
         return
 
     if trainer.deepspeed:
@@ -1000,7 +992,6 @@ class LazySupervisedDataset(Dataset):
 
     def __len__(self):
         return len(self.list_data_dict)
-        # return 10
 
     # @property
     # def lengths(self):
@@ -1032,8 +1023,12 @@ class LazySupervisedDataset(Dataset):
             if 'image' in sources[0] and 'video' not in sources[0]:
                 # rank0_print('image')
                 image_file = self.list_data_dict[i]['image']
+                # print(image_file)
                 image_folder = self.data_args.image_folder
                 image_processor = self.data_args.image_processor
+                dino_processor = self.data_args.dino_processor
+                ocr_processor = self.data_args.ocr_processor
+                graph_processor = self.data_args.graph_processor
                 image_file = image_file if isinstance(image_file, list) else [image_file]
                 image_file = order_pick_k(image_file, MAX_IMAGE_LENGTH)
                 # print(f"total {len(self.list_data_dict[i]['image'])} now {len(image_file)}")
@@ -1041,11 +1036,19 @@ class LazySupervisedDataset(Dataset):
                 # image = [numpy.asarray(img) for img in image]
                 # print(image[0])
                 # print('image_processor:', image_processor)
+                dino_image = copy.deepcopy(image)
+                ocr_image = copy.deepcopy(image)
+                graph_image = copy.deepcopy(image)
                 if self.data_args.image_aspect_ratio == 'pad':
                     image = [expand2square(i, tuple(int(x * 255) for x in image_processor.image_mean)) for i in image]
-                    image = [image_processor.preprocess(i, return_tensors='pt')['pixel_values'][0] for i in image]
-                else:
-                    image = [image_processor.preprocess(i, return_tensors='pt')['pixel_values'][0] for i in image]
+                    dino_image = [expand2square(i, tuple(int(x * 255) for x in dino_processor.image_mean)) for i in dino_image]
+                    ocr_image = [expand2square(i, tuple(int(x * 255) for x in ocr_processor.image_mean)) for i in ocr_image]
+                    graph_image = [expand2square(i, tuple(int(x * 255) for x in graph_processor.image_mean)) for i in graph_image]
+                clip_image = [image_processor.preprocess(i, return_tensors='pt')['pixel_values'][0] for i in image]
+                dino_image = [dino_processor.preprocess(i, return_tensors='pt')['pixel_values'][0] for i in dino_image]
+                ocr_image = [ocr_processor.preprocess(i, return_tensors='pt')['pixel_values'][0] for i in ocr_image]
+                graph_image = [graph_processor.preprocess(i) for i in graph_image]
+                
                 # print(image[0].shape)
                 sources = preprocess_multimodal(copy.deepcopy([e["conversations"] for e in sources]), self.data_args)
                 data_dict = preprocess(sources, self.tokenizer, has_image=True)
@@ -1105,14 +1108,37 @@ class LazySupervisedDataset(Dataset):
                                  labels=data_dict["labels"][0])
             # image exist in the data
             if 'image' in self.list_data_dict[i] or 'video' in self.list_data_dict[i]:
-                data_dict['image'] = image
+                data_dict['image'] = clip_image
+                data_dict['dino_image'] = dino_image
+                data_dict['ocr_image'] = ocr_image
+                data_dict['graph_image'] = graph_image
+                # print('data_dict_keys():', {k: type(v[0]) for k,v in data_dict.items() if k in ['image', 'dino_image', 'ocr_image', 'graph_image']})
+                # print('data_dict_keys():', data_dict.keys())
             elif self.data_args.is_multimodal:
                 if hasattr(self.data_args.image_processor, 'crop_size'):
                     crop_size = self.data_args.image_processor.crop_size
                     data_dict['image'] = [torch.zeros(3, crop_size['height'], crop_size['width'])]
+
+                    crop_size = self.data_args.dino_processor.crop_size
+                    data_dict['dino_image'] = [torch.zeros(3, crop_size['height'], crop_size['width'])]
+
+                    crop_size = self.data_args.ocr_processor.size
+                    data_dict['ocr_image'] = [torch.zeros(3, crop_size['height'], crop_size['width'])]
+
+                    crop_size = self.data_args.graph_processor.crop_size
+                    data_dict['graph_image'] = [torch.zeros(3, crop_size['height'], crop_size['width'])]
                 else:
                     size = self.data_args.image_processor.size
                     data_dict['image'] = [torch.zeros(3, size['height'], size['width'])]
+
+                    crop_size = self.data_args.dino_processor.crop_size
+                    data_dict['dino_image'] = [torch.zeros(3, crop_size['height'], crop_size['width'])]
+
+                    crop_size = self.data_args.ocr_processor.size
+                    data_dict['ocr_image'] = [torch.zeros(3, crop_size['height'], crop_size['width'])]
+
+                    crop_size = self.data_args.graph_processor.crop_size
+                    data_dict['graph_image'] = [torch.zeros(3, crop_size['height'], crop_size['width'])]
             return data_dict
         except Exception as e:
             print(f'Error with {e}')
@@ -1162,6 +1188,39 @@ class DataCollatorForSupervisedDataset(object):
                 image(3, 224, 224),      # sample 6
             ]
         '''
+        if 'dino_image' in instances[0]:
+            dino_images = [instance['dino_image'] for instance in instances]
+            new_images = []
+            for image in dino_images:
+                if type(image) is list:
+                    for i in image:
+                        new_images.append(i)
+                else:
+                    new_images.append(image)
+            batch['dino_images'] = new_images
+
+        if 'ocr_image' in instances[0]:
+            ocr_images = [instance['ocr_image'] for instance in instances]
+            new_images = []
+            for image in ocr_images:
+                if type(image) is list:
+                    for i in image:
+                        new_images.append(i)
+                else:
+                    new_images.append(image)
+            batch['ocr_images'] = new_images
+        
+        if 'graph_image' in instances[0]:
+            graph_images = [instance['graph_image'] for instance in instances]
+            new_images = []
+            for image in graph_images:
+                if type(image) is list:
+                    for i in image:
+                        new_images.append(i)
+                else:
+                    new_images.append(image)
+            batch['graph_images'] = new_images
+
         if 'image' in instances[0]:
             images = [instance['image'] for instance in instances]
 
@@ -1183,6 +1242,7 @@ class DataCollatorForSupervisedDataset(object):
         #         batch['images'] = images
         else:
             raise ValueError(f'pretrain, {instances}')
+        # print('batch_keys():', {k: type(v[0]) for k,v in batch.items() if k in ['images', 'dino_images', 'ocr_images', 'graph_images']})
         return batch
 
 
@@ -1545,6 +1605,9 @@ def train():
             #         print('dadadada', name)
             #         param.data = param.data.float()
             data_args.image_processor = image_tower.image_processor
+            data_args.dino_processor = BitImageProcessor.from_pretrained('facebook/dinov2-giant')
+            data_args.ocr_processor = LayoutLMv3ImageProcessor.from_pretrained("microsoft/layoutlmv3-large")
+            data_args.graph_processor = model.get_graph_tower().image_processor
             data_args.is_multimodal = True
         if model_args.video_tower is not None:
             video_tower = model.get_video_tower()
@@ -1568,8 +1631,8 @@ def train():
                 p.requires_grad = True
             for p in model.get_model().ocr_mm_projector.parameters():
                 p.requires_grad = True
-            # for p in model.get_model().graph_mm_projector.parameters():
-            #     p.requires_grad = True
+            for p in model.get_model().graph_mm_projector.parameters():
+                p.requires_grad = True
             for p in model.get_model().fusion_mm_projector.parameters():
                 p.requires_grad = True
 
@@ -1581,8 +1644,8 @@ def train():
                 p.requires_grad = False
             for p in model.get_model().ocr_mm_projector.parameters():
                 p.requires_grad = False
-            # for p in model.get_model().graph_mm_projector.parameters():
-            #     p.requires_grad = False
+            for p in model.get_model().graph_mm_projector.parameters():
+                p.requires_grad = False
             for p in model.get_model().fusion_mm_projector.parameters():
                 p.requires_grad = False
 
@@ -1590,7 +1653,7 @@ def train():
             model.get_model().mm_projector.to(dtype=compute_dtype, device=training_args.device)
             model.get_model().dino_mm_projector.to(dtype=compute_dtype, device=training_args.device)
             model.get_model().ocr_mm_projector.to(dtype=compute_dtype, device=training_args.device)
-            # model.get_model().graph_mm_projector.to(dtype=compute_dtype, device=training_args.device)
+            model.get_model().graph_mm_projector.to(dtype=compute_dtype, device=training_args.device)
             model.get_model().fusion_mm_projector.to(dtype=compute_dtype, device=training_args.device)
 
         model.config.mm_use_im_start_end = data_args.mm_use_im_start_end = model_args.mm_use_im_start_end
