@@ -119,15 +119,19 @@ class SGVisionTower(nn.Module):
         self.vision_tower_name = vision_tower
         self.select_layer = args.mm_vision_select_layer
         self.select_feature = getattr(args, 'mm_vision_select_feature', 'patch')
-        self.sgg_config_path = '/home/pcl/sgg_graph_encoder/configs/e2e_relation_X_101_32_8_FPN_1x.yaml'
-        self.sgg_model_dir = '/home/pcl/sgdet_trans_baseline' ###'/home/pcl/upload_causal_motif_sgdet'
-        self.GLOVE_DIR = '/home/pcl/glove'
+        self.sg_home = '/home/pcl/'
+        self.sgg_config_path = self.sg_home + 'sgg_graph_encoder/configs/e2e_merge_relation_X_101_32_8_FPN_1x.yaml'
+        self.sgg_model_dir = self.sg_home + 'trans_baseline' ###'/home/pcl/upload_causal_motif_sgdet'
+        self.sgg_model_path = self.sg_home + 'trans_baseline/model_final.pth'
+        cache_file = torch.load(self.sg_home + 'trans_baseline/VG_stanford_filtered_with_attribute_train_statistics.cache')
+        self.rel_classes = cache_file['rel_classes']
+        self.obj_classes = cache_file['obj_classes']
+        self.GLOVE_DIR = self.sg_home + 'glove'
 
         cfg.merge_from_file(self.sgg_config_path)
         cfg.OUTPUT_DIR = self.sgg_model_dir
         cfg.GLOVE_DIR = self.GLOVE_DIR
         cfg.MODEL.ROI_HEADS.DETECTIONS_PER_IMG = 72 ## 16
-        cfg.MODEL.ROI_RELATION_HEAD.BATCH_SIZE_PER_IMAGE = 256 ## 1024
         cfg.MODEL.ROI_RELATION_HEAD.USE_GT_BOX = False
         cfg.MODEL.ROI_RELATION_HEAD.USE_GT_OBJECT_LABEL = False
         cfg.MODEL.ROI_RELATION_HEAD.PREDICTOR = 'TransformerPredictor'
@@ -144,10 +148,10 @@ class SGVisionTower(nn.Module):
             self.cfg_only = CLIPVisionConfig.from_pretrained(self.vision_tower_name)
 
         self.embed_dim = cfg.MODEL.ROI_RELATION_HEAD.EMBED_DIM
-        obj_embed_vecs = obj_edge_vectors(VG_Classes, wv_dir=cfg.GLOVE_DIR, wv_dim=self.embed_dim)
-        rel_embed_vecs = rel_vectors(VG_ACTIONS, wv_dir=cfg.GLOVE_DIR, wv_dim=self.embed_dim)
-        self.obj_embed = nn.Embedding(len(VG_Classes), self.embed_dim)
-        self.rel_embed = nn.Embedding(len(VG_ACTIONS), self.embed_dim)
+        obj_embed_vecs = obj_edge_vectors(self.obj_classes, wv_dir=cfg.GLOVE_DIR, wv_dim=self.embed_dim)
+        rel_embed_vecs = rel_vectors(self.rel_classes, wv_dir=cfg.GLOVE_DIR, wv_dim=self.embed_dim)
+        self.obj_embed = nn.Embedding(len(self.obj_classes), self.embed_dim)
+        self.rel_embed = nn.Embedding(len(self.rel_classes), self.embed_dim)
         with torch.no_grad():
             self.obj_embed.weight.copy_(obj_embed_vecs, non_blocking=True)
             self.rel_embed.weight.copy_(rel_embed_vecs, non_blocking=True)
@@ -162,7 +166,7 @@ class SGVisionTower(nn.Module):
 
         self.sgg_model = build_detection_model(self.cfg)
         checkpointer = DetectronCheckpointer(self.cfg, self.sgg_model, save_dir=self.cfg.OUTPUT_DIR)
-        _ = checkpointer.load('/home/pcl/sgdet_trans_baseline/model_0009000.pth')
+        _ = checkpointer.load(self.sgg_model_path)
         self.transforms = build_transforms(self.cfg, False)
         # self.clip_vision_tower = CLIPVisionModel.from_pretrained(self.vision_tower_name)
         self.image_processor = GraphProcessor(cfg)
@@ -227,7 +231,6 @@ class SGVisionTower(nn.Module):
             rel_pair_idxs = result.get_field('rel_pair_idxs')
             rel_labels = result.get_field('pred_rel_labels')
             pair_pred = torch.stack((pred_labels[rel_pair_idxs[:, 0]], pred_labels[rel_pair_idxs[:, 1]]), dim=1)
-           
             head_emb = self.obj_embed(pair_pred[:, 0])
             rel_emb = self.rel_embed(rel_labels)
             tail_emb = self.obj_embed(pair_pred[:, 1])
