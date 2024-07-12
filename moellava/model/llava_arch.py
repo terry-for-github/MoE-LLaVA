@@ -44,9 +44,9 @@ class LlavaMetaModel:
             self.video_tower = build_video_tower(config, delay_load=True)
         if getattr(config, "mm_image_tower", None) is not None or getattr(config, "mm_video_tower", None) is not None:
             self.mm_projector = build_projector(config)
+            self.graph_mm_projector = build_projector(config, load_model="graph")
             self.dino_mm_projector = build_projector(config, load_model="dino", m=2)
             self.ocr_mm_projector = build_projector(config, load_model="ocr", m=2)
-            self.graph_mm_projector = build_projector(config, load_model="graph")
             self.fusion_mm_projector = build_projector(config, load_model="fusion")
 
 
@@ -258,7 +258,7 @@ class LlavaMetaModel:
             self.fusion_mm_projector.load_state_dict(get_w(fusion_mm_projector_weights, 'fusion_mm_projector'))
 
 class LlavaMetaForCausalLM(ABC):
-    cnt = 0
+    # cnt = 0
     @abstractmethod
     def get_model(self):
         pass
@@ -297,8 +297,8 @@ class LlavaMetaForCausalLM(ABC):
         # paras = [para for para in self.get_model().mm_projector.parameters()]
         # print('image_features_clip_dtype: ', image_features_clip.dtype, paras[0].dtype)
         image_features_clip = self.get_model().mm_projector.forward_image(image_features_clip)
-        if LlavaMetaForCausalLM.cnt % 10 == 0 and os.environ['RANK'] == '0':
-            print('clip', next(self.get_model().mm_projector.image_spatial_proj.parameters()))
+        # if LlavaMetaForCausalLM.cnt % 10 == 0 and os.environ['RANK'] == '0':
+        #     print('clip', next(self.get_model().mm_projector.image_spatial_proj.parameters()))
         return image_features_clip
 
     #HACK specify m = 2
@@ -307,8 +307,8 @@ class LlavaMetaForCausalLM(ABC):
         bs, num_patches, dim = image_features_dino.shape
         image_features_dino = image_features_dino.view(bs, num_patches // m, -1)
         image_features_dino = self.get_model().dino_mm_projector.forward_image(image_features_dino)
-        if LlavaMetaForCausalLM.cnt % 10 == 0 and os.environ['RANK'] == '0':
-            print('dino', next(self.get_model().dino_mm_projector.image_spatial_proj.parameters()))
+        # if LlavaMetaForCausalLM.cnt % 10 == 0 and os.environ['RANK'] == '0':
+        #     print('dino', next(self.get_model().dino_mm_projector.image_spatial_proj.parameters()))
         return image_features_dino
 
     def encode_images_withocr(self, images, m = 2):
@@ -316,8 +316,8 @@ class LlavaMetaForCausalLM(ABC):
         bs, num_patches, dim = image_features_ocr.shape
         image_features_ocr = image_features_ocr.view(bs, num_patches // m, -1)
         image_features_ocr = self.get_model().ocr_mm_projector.forward_image(image_features_ocr)
-        if LlavaMetaForCausalLM.cnt % 10 == 0 and os.environ['RANK'] == '0':
-            print('ocr', next(self.get_model().ocr_mm_projector.image_spatial_proj.parameters()))
+        # if LlavaMetaForCausalLM.cnt % 10 == 0 and os.environ['RANK'] == '0':
+        #     print('ocr', next(self.get_model().ocr_mm_projector.image_spatial_proj.parameters()))
         return image_features_ocr
 
     def encode_images_withgraph(self, images, m = 2):
@@ -326,8 +326,8 @@ class LlavaMetaForCausalLM(ABC):
         # bs, num_patches, dim = image_features_graph.shape
         # image_features_graph = image_features_graph.view(bs, num_patches // m, -1)
         image_features_graph = self.get_model().graph_mm_projector.forward_image(image_features_graph)
-        if LlavaMetaForCausalLM.cnt % 10 == 0 and os.environ['RANK'] == '0':
-            print('graph', next(self.get_model().graph_mm_projector.image_spatial_proj.parameters()))
+        # if LlavaMetaForCausalLM.cnt % 10 == 0 and os.environ['RANK'] == '0':
+        #     print('graph', next(self.get_model().graph_mm_projector.image_spatial_proj.parameters()))
         return image_features_graph
 
     def encode_images_withexp(self, images, m = [1,2,2]):
@@ -340,9 +340,9 @@ class LlavaMetaForCausalLM(ABC):
         # print(image_features.shape)
         image_features = F.gelu(image_features)
         image_features = self.get_model().fusion_mm_projector.forward_image(image_features)
-        if LlavaMetaForCausalLM.cnt % 10 == 0 and os.environ['RANK'] == '0':
-            print('fusion', next(self.get_model().fusion_mm_projector.image_spatial_proj.parameters()))
-        LlavaMetaForCausalLM.cnt += 1
+        # if LlavaMetaForCausalLM.cnt % 10 == 0 and os.environ['RANK'] == '0':
+        #     print('fusion', next(self.get_model().fusion_mm_projector.image_spatial_proj.parameters()))
+        # LlavaMetaForCausalLM.cnt += 1
         return image_features
 
     def encode_videos(self, videos):  # [mini_b, c, t, h, w]

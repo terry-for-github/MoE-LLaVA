@@ -64,6 +64,9 @@ def eval_model(args):
         fea_hooks = get_gating_logit_by_hook(model)
         all_gating_logits = {}
     image_processor = processor['image']
+    dino_processor = processor['dino_image']
+    ocr_processor = processor['ocr_image']
+    graph_processor = processor['graph_image']
     questions = pd.read_table(os.path.expanduser(args.question_file))
     questions = get_chunk(questions, args.num_chunks, args.chunk_idx)
     answers_file = os.path.expanduser(args.answers_file)
@@ -113,7 +116,11 @@ def eval_model(args):
 
             input_ids = tokenizer_image_token(prompt, tokenizer, IMAGE_TOKEN_INDEX, return_tensors='pt').unsqueeze(0).cuda()
 
-            image_tensor = process_images([image], image_processor, model.config)[0]
+            image_tensor, dino_tensor, ocr_tensor, graph_tensor = process_images([image], image_processor, dino_processor, ocr_processor, graph_processor, model.config)
+            image_tensor = image_tensor[0].to(dtype=torch.float16, device='cuda', non_blocking=True)
+            dino_tensor = dino_tensor[0].to(dtype=torch.float16, device='cuda', non_blocking=True)
+            ocr_tensor = ocr_tensor[0].to(dtype=torch.float16, device='cuda', non_blocking=True)
+            graph_tensor = graph_tensor[0].to(dtype=torch.float16, device='cuda', non_blocking=True)
             # image_tensor = image_processor.preprocess(image, return_tensors='pt')['pixel_values'][0]
 
             conv = conv_templates[args.conv_mode].copy()
@@ -124,7 +131,10 @@ def eval_model(args):
             with torch.inference_mode():
                 output_ids = model.generate(
                     input_ids,
-                    images=image_tensor.unsqueeze(0).half().cuda(),
+                    images=image_tensor.unsqueeze(0),
+                    dino_images=dino_tensor.unsqueeze(0),
+                    ocr_images=ocr_tensor.unsqueeze(0),
+                    graph_images=graph_tensor.unsqueeze(0),
                     do_sample=True if args.temperature > 0 else False,
                     temperature=args.temperature,
                     top_p=args.top_p,
