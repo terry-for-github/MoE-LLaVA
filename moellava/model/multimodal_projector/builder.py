@@ -8,6 +8,7 @@ from moellava.model.multimodal_projector.pool_block import Pool_Block
 from moellava.model.multimodal_projector.qformer import qformer_config_template, Blip2Model, cheap_qformer_config_template, \
     Cheap_Blip2Model
 from moellava.model.multimodal_projector.simple_block import SimpleBlock, Cheap_SimpleBlock
+from moellava.model.multimodal_encoder.graph_encoder import SGAdapter
 
 
 class IdentityMap(nn.Module):
@@ -40,7 +41,9 @@ def build_image_projector(config, load_model='clip', m=1, delay_load=False, **kw
         elif load_model == 'fusion':
             return nn.Linear(config.hidden_size, config.hidden_size)
         elif load_model == 'graph':
-            return nn.Linear(4096, config.hidden_size)
+            sgadapter = SGAdapter(config)
+            # sgadapter modules = nn.Sequential(*[sgadapter, nn.Linear(4096, config.hidden_size)])
+            return sgadapter
 
     elif projector_type.startswith('qformer'):  # qformer4_36
         qformer_config = cheap_qformer_config_template(config, projector_type) if is_cheap else qformer_config_template(config, projector_type)
@@ -68,7 +71,10 @@ def build_image_projector(config, load_model='clip', m=1, delay_load=False, **kw
             elif load_model == 'ocr':
                 modules = [nn.Linear(1024 * m, config.hidden_size)]
             elif load_model == 'graph':
-                modules = [nn.Linear(4096, config.hidden_size)]
+                sgadapter = SGAdapter(config)
+                # sgadapter modules = nn.Sequential(*[sgadapter, nn.Linear(4096, config.hidden_size)])
+                return sgadapter
+                return modules
             elif load_model == 'fusion':
                 modules = [nn.Linear(config.hidden_size, config.hidden_size)]
             else:

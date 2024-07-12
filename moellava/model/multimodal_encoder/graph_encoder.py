@@ -12,7 +12,7 @@ from maskrcnn_benchmark.utils.checkpoint import DetectronCheckpointer
 from maskrcnn_benchmark.structures.bounding_box import BoxList
 from maskrcnn_benchmark.structures.image_list import to_image_list
 from transformers import CLIPVisionModel, CLIPImageProcessor, CLIPVisionConfig
-
+import json
 
 from maskrcnn_benchmark.modeling.roi_heads.relation_head.utils_motifs import obj_edge_vectors, rel_vectors
 from collections import OrderedDict
@@ -97,18 +97,87 @@ class GraphProcessor(object):
         self.crop_size = {"height": 600, "width": 600}
         self.image_mean = [102.9801 / 255, 115.9465 / 255, 122.7717 / 255]
         self.image_std = [1., 1., 1.]
-        self.transforms = build_transforms(cfg)
+        self.transforms = build_transforms(cfg, False)
+
+        self.iter = 1
 
     def preprocess(self, img):
         box = torch.tensor([[34, 323, 30, 40]])
 
         w, h = img.size[0], img.size[1]
 
-        # img.save('demo.png')
+        img.save('/home/pcl/sgg_graph_encoder/demo_{}.png'.format(self.iter))
         proposal = BoxList(box, (w, h), 'xyxy')  # xyxy
+        self.iter += 1
 
         img, proposal = self.transforms(img, proposal)
         return img
+
+
+class SGAdapter(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.sg_home = '/home/pcl/'
+
+        # self.sgg_config_path = self.sg_home + 'sgg_graph_encoder/configs/e2e_merge_relation_X_101_32_8_FPN_1x.yaml'
+        # self.sgg_model_dir = self.sg_home + 'trans_baseline'  ###'/home/pcl/upload_causal_motif_sgdet'
+        # cache_file = torch.load(self.sg_home + 'trans_baseline/VG_stanford_filtered_with_attribute_train_statistics.cache')
+
+        self.sgg_config_path = self.sg_home + 'sgg_graph_encoder/configs/e2e_relation_X_101_32_8_FPN_1x.yaml'
+        self.sgg_model_dir = self.sg_home + 'sgdet_trans_baseline'  ###'/home/pcl/upload_causal_motif_sgdet'
+        cache_file = torch.load(
+            self.sg_home + 'sgdet_trans_baseline/VG_stanford_filtered_with_attribute_train_statistics.cache')
+
+        self.hidden_size = config.hidden_size
+        self.rel_classes = cache_file['rel_classes']
+        self.obj_classes = cache_file['obj_classes']
+        self.GLOVE_DIR = self.sg_home + 'glove'
+        self.embed_dim = 200
+        obj_embed_vecs = obj_edge_vectors(self.obj_classes, wv_dir=self.GLOVE_DIR, wv_dim=self.embed_dim)
+        rel_embed_vecs = rel_vectors(self.rel_classes, wv_dir=self.GLOVE_DIR, wv_dim=self.embed_dim)
+        self.obj_embed = nn.Embedding(len(self.obj_classes), self.embed_dim)
+        self.rel_embed = nn.Embedding(len(self.rel_classes), self.embed_dim)
+        self.projector = nn.Linear(4096, self.hidden_size)
+        with torch.no_grad():
+            self.obj_embed.weight.copy_(obj_embed_vecs, non_blocking=True)
+            self.rel_embed.weight.copy_(rel_embed_vecs, non_blocking=True)
+
+        width = self.embed_dim
+        num_layer = 4
+        num_head = 8
+        self.transformer = Transformer(width, num_layer, num_head)
+        self.transformer.to(dtype=torch.float16)
+        self.iter = 1
+        self.results = {}
+
+    def forward(self, results):
+        graph_embeddings = []
+        for result in results:
+            triplets = []
+            pred_labels = result.get_field('pred_labels')
+            rel_pair_idxs = result.get_field('rel_pair_idxs')
+            rel_labels = result.get_field('pred_rel_labels')
+            pair_pred = torch.stack((pred_labels[rel_pair_idxs[:, 0]], pred_labels[rel_pair_idxs[:, 1]]), dim=1)
+            head_emb = self.obj_embed(pair_pred[:, 0])
+            rel_emb = self.rel_embed(rel_labels)
+            tail_emb = self.obj_embed(pair_pred[:, 1])
+            for pair, rel in zip(pair_pred, rel_labels):
+                sub_label = VG_Classes[pair[0].item()]
+                obj_label = VG_Classes[pair[1].item()]
+                rel_label = VG_ACTIONS[rel.item()]
+                triplet = sub_label + '_' + rel_label + '_' + obj_label
+                triplets.append(triplet)
+            self.results[self.iter] = triplets
+            with open("/home/pcl/sgg_graph_encoder/results.json", "w") as f:
+                json.dump(self.results, f)
+            triple_emb = head_emb + rel_emb + tail_emb
+            knowledge_emb = self.transformer(triple_emb)
+            knowledge_emb = torch.mean(knowledge_emb, dim=0).unsqueeze(0)
+            graph_embeddings.append(knowledge_emb)
+            self.iter += 1
+        graph_embeddings = torch.cat(graph_embeddings, dim=0)
+        graph_embeddings = self.projector(graph_embeddings.unsqueeze(1))
+        return graph_embeddings
 
 class SGVisionTower(nn.Module):
     def __init__(self, vision_tower, args, delay_load=False):
@@ -120,12 +189,21 @@ class SGVisionTower(nn.Module):
         self.select_layer = args.mm_vision_select_layer
         self.select_feature = getattr(args, 'mm_vision_select_feature', 'patch')
         self.sg_home = '/home/pcl/'
-        self.sgg_config_path = self.sg_home + 'sgg_graph_encoder/configs/e2e_merge_relation_X_101_32_8_FPN_1x.yaml'
-        self.sgg_model_dir = self.sg_home + 'trans_baseline' ###'/home/pcl/upload_causal_motif_sgdet'
-        self.sgg_model_path = self.sg_home + 'trans_baseline/model_final.pth'
-        cache_file = torch.load(self.sg_home + 'trans_baseline/VG_stanford_filtered_with_attribute_train_statistics.cache')
+        # self.sgg_config_path = self.sg_home + 'sgg_graph_encoder/configs/e2e_merge_relation_X_101_32_8_FPN_1x.yaml'
+        # self.sgg_model_dir = self.sg_home + 'trans_baseline' ###'/home/pcl/upload_causal_motif_sgdet'
+        # self.sgg_model_path = self.sg_home + 'trans_baseline/model_final.pth'
+        # cache_file = torch.load(self.sg_home + 'trans_baseline/VG_stanford_filtered_with_attribute_train_statistics.cache')
+        # self.rel_classes = cache_file['rel_classes']
+        # self.obj_classes = cache_file['obj_classes']
+
+        self.sgg_config_path = self.sg_home + 'sgg_graph_encoder/configs/e2e_relation_X_101_32_8_FPN_1x.yaml'
+        self.sgg_model_dir = self.sg_home + 'sgdet_trans_baseline'  ###'/home/pcl/upload_causal_motif_sgdet'
+        self.sgg_model_path = self.sg_home + 'sgdet_trans_baseline/model_final.pth'
+        cache_file = torch.load(
+            self.sg_home + 'sgdet_trans_baseline/VG_stanford_filtered_with_attribute_train_statistics.cache')
         self.rel_classes = cache_file['rel_classes']
         self.obj_classes = cache_file['obj_classes']
+
         self.GLOVE_DIR = self.sg_home + 'glove'
 
         cfg.merge_from_file(self.sgg_config_path)
@@ -139,7 +217,7 @@ class SGVisionTower(nn.Module):
         cfg.MODEL.ROI_RELATION_HEAD.RETURN_GRAPH_EMBEDDING = False
         cfg.freeze()
         self.cfg = cfg
-        self.img_mean, self.img_std = np.array([0.48145466, 0.4578275, 0.40821073]), np.array(
+        self.img_mean, self.img_std = np.array([0.4038, 0.4547, 0.4815]), np.array(
             [0.26862954, 0.26130258, 0.27577711])
 
         if not delay_load:
@@ -147,20 +225,20 @@ class SGVisionTower(nn.Module):
         else:
             self.cfg_only = CLIPVisionConfig.from_pretrained(self.vision_tower_name)
 
-        self.embed_dim = cfg.MODEL.ROI_RELATION_HEAD.EMBED_DIM
-        obj_embed_vecs = obj_edge_vectors(self.obj_classes, wv_dir=cfg.GLOVE_DIR, wv_dim=self.embed_dim)
-        rel_embed_vecs = rel_vectors(self.rel_classes, wv_dir=cfg.GLOVE_DIR, wv_dim=self.embed_dim)
-        self.obj_embed = nn.Embedding(len(self.obj_classes), self.embed_dim)
-        self.rel_embed = nn.Embedding(len(self.rel_classes), self.embed_dim)
-        with torch.no_grad():
-            self.obj_embed.weight.copy_(obj_embed_vecs, non_blocking=True)
-            self.rel_embed.weight.copy_(rel_embed_vecs, non_blocking=True)
-
-        width = self.embed_dim
-        num_layer = 4
-        num_head = 8
-        self.transformer = Transformer(width, num_layer, num_head)
-        self.transformer.to(dtype=torch.float16)
+        # self.embed_dim = cfg.MODEL.ROI_RELATION_HEAD.EMBED_DIM
+        # obj_embed_vecs = obj_edge_vectors(self.obj_classes, wv_dir=cfg.GLOVE_DIR, wv_dim=self.embed_dim)
+        # rel_embed_vecs = rel_vectors(self.rel_classes, wv_dir=cfg.GLOVE_DIR, wv_dim=self.embed_dim)
+        # self.obj_embed = nn.Embedding(len(self.obj_classes), self.embed_dim)
+        # self.rel_embed = nn.Embedding(len(self.rel_classes), self.embed_dim)
+        # with torch.no_grad():
+        #     self.obj_embed.weight.copy_(obj_embed_vecs, non_blocking=True)
+        #     self.rel_embed.weight.copy_(rel_embed_vecs, non_blocking=True)
+        #
+        # width = self.embed_dim
+        # num_layer = 8
+        # num_head = 16
+        # self.transformer = Transformer(width, num_layer, num_head)
+        # self.transformer.to(dtype=torch.float16)
 
     def load_model(self):
 
@@ -225,22 +303,22 @@ class SGVisionTower(nn.Module):
         with torch.no_grad():
             results = self.sgg_model(img, [[]], [], [0], [[]])
 
-        graph_embeddings = []
-        for result in results:
-            pred_labels = result.get_field('pred_labels')
-            rel_pair_idxs = result.get_field('rel_pair_idxs')
-            rel_labels = result.get_field('pred_rel_labels')
-            pair_pred = torch.stack((pred_labels[rel_pair_idxs[:, 0]], pred_labels[rel_pair_idxs[:, 1]]), dim=1)
-            head_emb = self.obj_embed(pair_pred[:, 0])
-            rel_emb = self.rel_embed(rel_labels)
-            tail_emb = self.obj_embed(pair_pred[:, 1])
-            triple_emb = head_emb + rel_emb + tail_emb
-            knowledge_emb = self.transformer(triple_emb)
-            knowledge_emb = torch.mean(knowledge_emb, dim=0).unsqueeze(0)
-            graph_embeddings.append(knowledge_emb)
-        graph_embeddings = torch.cat(graph_embeddings, dim=0)
+        # graph_embeddings = []
+        # for result in results:
+        #     pred_labels = result.get_field('pred_labels')
+        #     rel_pair_idxs = result.get_field('rel_pair_idxs')
+        #     rel_labels = result.get_field('pred_rel_labels')
+        #     pair_pred = torch.stack((pred_labels[rel_pair_idxs[:, 0]], pred_labels[rel_pair_idxs[:, 1]]), dim=1)
+        #     head_emb = self.obj_embed(pair_pred[:, 0])
+        #     rel_emb = self.rel_embed(rel_labels)
+        #     tail_emb = self.obj_embed(pair_pred[:, 1])
+        #     triple_emb = head_emb + rel_emb + tail_emb
+        #     knowledge_emb = self.transformer(triple_emb)
+        #     knowledge_emb = torch.mean(knowledge_emb, dim=0).unsqueeze(0)
+        #     graph_embeddings.append(knowledge_emb)
+        # graph_embeddings = torch.cat(graph_embeddings, dim=0)
 
-        return graph_embeddings
+        return results
 
     @torch.no_grad()
     def forward(self, images):
@@ -257,11 +335,12 @@ class SGVisionTower(nn.Module):
         #     image_features.append(self.encode_graphs(image))
         # image_features = torch.stack(image_features).to(dtype=torch.bfloat16)
         # return image_features
+
         if type(images) is list:
             # image_features = []
             images = to_image_list(images, 32).to(self.device)
             image_features = self.encode_graphs(images.to(device=self.device, dtype=self.dtype))
-            image_features = image_features.unsqueeze(1)
+            # image_features = image_features.unsqueeze(1)
             # for image in images:
             #     images = to_image_list(img, 32).to(self.device)
             #     # image_features.append(image_feature)
